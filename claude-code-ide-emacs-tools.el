@@ -40,6 +40,10 @@
 (declare-function treesit-node-text "treesit" (node &optional no-property))
 (declare-function treesit-node-field-name "treesit" (node))
 
+;; Defined in claude-code-ide.el; required at runtime by the main package, so
+;; declared here to avoid a circular require.
+(declare-function claude-code-ide--set-run-status "claude-code-ide" (directory status))
+
 ;;; Tool Functions
 
 (defun claude-code-ide-mcp-xref-find-references (identifier file-path)
@@ -332,6 +336,20 @@ If INCLUDE_CHILDREN is non-nil, include child nodes."
          (format "Error getting tree-sitter info for %s: %s"
                  file-path (error-message-string err)))))))
 
+(defun claude-code-ide-mcp-set-session-status (status)
+  "Record STATUS as the run status of the calling Claude session.
+STATUS is one of \"idle\", \"working\", or \"blocked\"; anything else is
+treated as idle.  The session is resolved from the MCP call's own context,
+so its project directory keys the table `claude-code-ide-list-sessions' reads.
+Intended to be called by Claude Code hooks, not interactively."
+  (let ((status (or (and (member status '("idle" "working" "blocked")) status)
+                    "idle")))
+    (if-let* ((ctx (claude-code-ide-mcp-server-get-session-context))
+              (dir (plist-get ctx :project-dir)))
+        (progn (claude-code-ide--set-run-status dir status)
+               (format "status: %s" status))
+      "No session context available")))
+
 ;;; Tool Configuration
 
 ;;; Tool Registration
@@ -411,7 +429,16 @@ If INCLUDE_CHILDREN is non-nil, include child nodes."
            (:name "include_children"
                   :type boolean
                   :description "Include child nodes"
-                  :optional t))))
+                  :optional t)))
+
+  ;; Register session run-status tool (driven by Claude Code hooks)
+  (claude-code-ide-make-tool
+   :function #'claude-code-ide-mcp-set-session-status
+   :name "set_session_status"
+   :description "Report this Claude session's run status to Emacs. Intended to be called by Claude Code hooks, not interactively."
+   :args '((:name "status"
+                  :type string
+                  :description "One of: idle, working, blocked"))))
 
 (provide 'claude-code-ide-emacs-tools)
 ;;; claude-code-ide-emacs-tools.el ends here

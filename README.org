@@ -138,7 +138,7 @@ The easiest way to interact with Claude Code IDE is through the transient menu i
 | =M-x claude-code-ide-resume=              | Resume Claude Code with previous conversation     |
 | =M-x claude-code-ide-stop=                | Stop Claude Code for the current project          |
 | =M-x claude-code-ide-switch-to-buffer=    | Switch to project's Claude buffer                 |
-| =M-x claude-code-ide-list-sessions=       | List all active Claude Code sessions and switch   |
+| =M-x claude-code-ide-list-sessions=       | List sessions (ordered by status) and switch      |
 | =M-x claude-code-ide-check-status=        | Check if Claude Code CLI is installed and working |
 | =M-x claude-code-ide-insert-at-mentioned= | Send selected text to Claude prompt               |
 | =M-x claude-code-ide-send-escape=         | Send escape key to Claude terminal                |
@@ -458,6 +458,7 @@ Claude Code IDE includes built-in MCP tools that expose Emacs functionality to C
 - =treesit-info= - Get tree-sitter syntax tree information for deep code structure analysis
 - =imenu-list-symbols= - List all symbols (functions, classes, variables) in a file using imenu
 - =project-info= - Get information about the current project (directory, files, etc.)
+- =set_session_status= - Report a session's run status (idle/working/blocked) to Emacs (driven by Claude Code hooks; see [[#session-status][Session Status]])
 
 *** Enabling MCP Tools
 
@@ -475,6 +476,53 @@ Once enabled, Claude can use these tools to navigate your codebase. For example:
 - "Analyze the parse tree of this entire file"
 - "List all functions and variables in this file"
 - "How many files are in this project?"
+
+*** Session Status
+:PROPERTIES:
+:CUSTOM_ID: session-status
+:END:
+
+Each session reports its current *run status* to Emacs, so you can tell at a
+glance which sessions need you and which are busy. There are three statuses:
+
+- =blocked= - waiting on you (a permission prompt or elicitation dialog)
+- =working= - actively processing a prompt or running tools
+- =idle= - finished and waiting for input
+
+This works automatically once the built-in tools are enabled with
+=claude-code-ide-emacs-tools-setup=: the package registers a =set_session_status=
+MCP tool and hands the CLI a small hooks file (shipped with the package) via
+=--settings=, which calls that tool on the relevant lifecycle events. No manual
+hook configuration is required. Status is cleared automatically when a session
+exits, even on a crash.
+
+=M-x claude-code-ide-list-sessions= orders sessions by status (blocked first,
+then idle, then working) and annotates each with its status and how long it has
+held it. The status accessors =claude-code-ide-session-run-status= and
+=claude-code-ide-session-run-status-since= are public, so you can surface the
+information elsewhere (mode line, tab bar, etc.).
+
+To opt out, set =claude-code-ide-report-status= to =nil=; sessions then start
+without the status hooks.
+
+#+begin_src emacs-lisp
+;; Disable status reporting (enabled by default)
+(setq claude-code-ide-report-status nil)
+#+end_src
+
+**** Consult integration (optional)
+
+If you use [[https://github.com/minad/consult][=consult=]] (and optionally
+[[https://github.com/minad/marginalia][=marginalia=]]), loading
+=claude-code-ide-consult= adds a session source to =consult-buffer= (narrow with
+=c=) that previews sessions in the side window and shows the same
+status/elapsed-time annotations. It adds no hard dependency and activates only
+when those packages are present:
+
+#+begin_src emacs-lisp
+(with-eval-after-load 'consult
+  (require 'claude-code-ide-consult))
+#+end_src
 
 ** Creating Custom MCP Tools
 
