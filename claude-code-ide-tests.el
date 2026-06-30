@@ -1405,6 +1405,13 @@ have completed before cleanup.  Waits up to 5 seconds."
                                                (should (equal (alist-get 'mimeType entry) "text/plain"))))
   ;; Non-existent resource returns an error response
   (let ((response (claude-code-ide-mcp--handle-resources-read 1 '((uri . "file:///nonexistent/xyz")))))
+    (should (alist-get 'error response)))
+  ;; A directory URI is not a regular file and must return an error, not raise.
+  (let ((response (claude-code-ide-mcp--handle-resources-read
+                   1 `((uri . ,(concat "file://" temporary-file-directory))))))
+    (should (alist-get 'error response)))
+  ;; A URI without the file:// scheme is rejected with an error response.
+  (let ((response (claude-code-ide-mcp--handle-resources-read 1 '((uri . "http://example.com/x")))))
     (should (alist-get 'error response))))
 
 (ert-deftest claude-code-ide-test-mcp-tool-registry ()

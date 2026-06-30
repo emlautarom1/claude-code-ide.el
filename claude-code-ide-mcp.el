@@ -408,15 +408,27 @@ turn into {}. Recursively processes nested structures."
   (let* ((uri (alist-get 'uri params))
          (file-path (when (and uri (string-prefix-p "file://" uri))
                       (substring uri 7))))
-    (if (and file-path (file-exists-p file-path))
-        (claude-code-ide-mcp--make-response
-         id `((contents . ,(vector `((uri . ,uri)
-                                     (mimeType . ,(claude-code-ide-mcp--get-mime-type file-path))
-                                     (text . ,(with-temp-buffer
-                                                (insert-file-contents file-path)
-                                                (buffer-string))))))))
-      (claude-code-ide-mcp--make-error-response
-       id -32602 (format "Resource not found: %s" uri)))))
+    ;; Only regular, readable files can be returned.  Directories, special
+    ;; files, and unreadable paths are reported as "not found" rather than
+    ;; allowed to raise.
+    (if (not (and file-path
+                  (file-regular-p file-path)
+                  (file-readable-p file-path)))
+        (claude-code-ide-mcp--make-error-response
+         id -32602 (format "Resource not found: %s" uri))
+      ;; Guard the read itself so I/O errors become an MCP error response
+      ;; instead of an unhandled Elisp error.
+      (condition-case err
+          (claude-code-ide-mcp--make-response
+           id `((contents . ,(vector `((uri . ,uri)
+                                       (mimeType . ,(claude-code-ide-mcp--get-mime-type file-path))
+                                       (text . ,(with-temp-buffer
+                                                  (insert-file-contents file-path)
+                                                  (buffer-string))))))))
+        (error
+         (claude-code-ide-mcp--make-error-response
+          id -32603 (format "Failed to read resource %s: %s"
+                            uri (error-message-string err))))))))
 
 (defun claude-code-ide-mcp--handle-tools-call (id params &optional session)
   "Handle the tools/call request with ID and PARAMS.
