@@ -680,7 +680,10 @@ are ignored."
   (when (and claude-code-ide-enable-notifications
              (string-match-p "\007" input)
              (claude-code-ide--session-buffer-p (process-buffer process))
-             (not (string-match-p "]0;.*\007" input)))
+             ;; Ignore bells inside OSC title sequences (ESC ] 0 ; ... BEL).
+             ;; The ESC prefix is required so that ordinary output containing
+             ;; "]0;" is not mistaken for a title sequence and silenced.
+             (not (string-match-p "\033]0;.*\007" input)))
     (claude-code-ide--notify))
   (funcall orig-fun process input))
 

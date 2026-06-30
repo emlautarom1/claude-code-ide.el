@@ -2708,7 +2708,12 @@ have completed before cleanup.  Waits up to 5 seconds."
         ;; No bell -> no notify, passes through
         (claude-code-ide--vterm-bell-detector orig nil "plain text")
         (should (= notified 1))
-        (should (= orig-calls 3))))))
+        (should (= orig-calls 3))
+        ;; A literal "]0;" without the ESC prefix is NOT an OSC title
+        ;; sequence, so a bell alongside it must still notify.
+        (claude-code-ide--vterm-bell-detector orig nil "output ]0;not-a-title\007")
+        (should (= notified 2))
+        (should (= orig-calls 4))))))
 
 ;;; Tests for Diff Pluggability and Polish (Phase 4 port)
 
