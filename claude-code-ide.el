@@ -107,6 +107,19 @@
   :group 'tools
   :prefix "claude-code-ide-")
 
+(defvar claude-code-ide--package-directory
+  (file-name-directory (or load-file-name buffer-file-name default-directory))
+  "Directory the claude-code-ide package is installed in.
+Resolved at load time so files shipped with the package (such as the
+session-status hooks) can be located regardless of the install method.")
+
+(defconst claude-code-ide--status-hooks-file
+  (expand-file-name "claude-code-ide-hooks.json" claude-code-ide--package-directory)
+  "Absolute path to the Claude Code hooks settings shipped with the package.
+These hooks call the `set_session_status' MCP tool on session lifecycle
+events.  Passed to the CLI via --settings when `claude-code-ide-report-status'
+is non-nil.")
+
 (defcustom claude-code-ide-cli-path "claude"
   "Path to the Claude Code CLI executable."
   :type 'string
@@ -128,6 +141,15 @@ and should return a string to use as the buffer name."
   "Additional flags to pass to the Claude Code CLI.
 This should be a string of space-separated flags, e.g. \"--model opus\"."
   :type 'string
+  :group 'claude-code-ide)
+
+(defcustom claude-code-ide-report-status t
+  "Whether sessions report their run status (idle/working/blocked) to Emacs.
+When non-nil and the MCP tools server is enabled, the package hands the
+CLI a small hooks settings file (see `claude-code-ide--status-hooks-file')
+via --settings so it calls the `set_session_status' MCP tool on lifecycle
+events.  The status is shown in `claude-code-ide-list-sessions'."
+  :type 'boolean
   :group 'claude-code-ide)
 
 (defcustom claude-code-ide-system-prompt nil
@@ -357,6 +379,82 @@ a more stable viewing experience when working with multiple windows."
 
 (defvar claude-code-ide--last-accessed-buffer nil
   "The most recently accessed Claude Code buffer.")
+
+;;; Session Run Status
+
+(defvar claude-code-ide--run-status-table (make-hash-table :test 'equal)
+  "Map a session's project directory to its run status.
+Each value is a (STATUS . SET-AT) cons.  STATUS is one of \"idle\",
+\"working\", or \"blocked\"; SET-AT is the time the session entered that
+status, used to show how long it has held it.  Keys are canonicalised with
+`claude-code-ide--session-dir-key' so they match `claude-code-ide--processes'.")
+
+(defconst claude-code-ide--run-status-faces
+  '(("blocked" . error)     ; red   -- needs you, sorted first
+    ("idle"    . shadow)    ; grey
+    ("working" . success))  ; green -- busy, sorted last
+  "Known session run statuses, in the order they sort in the session list.
+Top = needs attention first.  Each key is the only valid status string and
+doubles as the label; its value is the face used to display it.")
+
+(defun claude-code-ide--session-dir-key (directory)
+  "Canonical key for DIRECTORY used to identify a session.
+Normalises any form of a path -- abbreviated (~/foo), with env vars,
+absolute, or with a trailing slash -- to one string, so writes, reads and
+the cleanup sweep all agree, and a status key matches its
+`claude-code-ide--processes' entry regardless of whether the caller
+included a trailing slash."
+  (directory-file-name (expand-file-name (substitute-in-file-name directory))))
+
+(defun claude-code-ide-session-run-status (directory)
+  "Run status string recorded for session DIRECTORY, or nil if none."
+  (car (gethash (claude-code-ide--session-dir-key directory)
+                claude-code-ide--run-status-table)))
+
+(defun claude-code-ide-session-run-status-since (directory)
+  "Time session DIRECTORY entered its current run status, or nil if none."
+  (cdr (gethash (claude-code-ide--session-dir-key directory)
+                claude-code-ide--run-status-table)))
+
+;;;###autoload
+(defun claude-code-ide--set-run-status (directory status)
+  "Record STATUS as the run status for session DIRECTORY.
+STATUS is one of \"idle\", \"working\", or \"blocked\"; anything else is
+treated as \"idle\".  The original SET-AT is kept while the status is
+unchanged; only a real transition restamps it."
+  (let ((status (if (assoc status claude-code-ide--run-status-faces) status "idle"))
+        (key (claude-code-ide--session-dir-key directory)))
+    (let ((prev (gethash key claude-code-ide--run-status-table)))
+      (puthash key
+               (cons status (if (equal (car prev) status)
+                                (cdr prev)
+                              (current-time)))
+               claude-code-ide--run-status-table))
+    status))
+
+(defun claude-code-ide--clear-run-status (directory)
+  "Drop DIRECTORY's recorded run status."
+  (remhash (claude-code-ide--session-dir-key directory)
+           claude-code-ide--run-status-table))
+
+(defun claude-code-ide--run-status-rank (directory)
+  "Sort key for session DIRECTORY: its status's position in the status table.
+This orders blocked before idle before working.  Unknown statuses sort last."
+  (let ((status (or (claude-code-ide-session-run-status directory) "idle")))
+    (or (seq-position claude-code-ide--run-status-faces status
+                      (lambda (entry s) (string= (car entry) s)))
+        most-positive-fixnum)))
+
+(defun claude-code-ide--format-status-age (since)
+  "Format the time elapsed since SINCE as a short string like \"5m\" or \"2h\".
+Returns an empty string when SINCE is nil."
+  (if (not since)
+      ""
+    (let ((secs (float-time (time-subtract (current-time) since))))
+      (cond ((< secs 60) (format "%ds" (floor secs)))
+            ((< secs 3600) (format "%dm" (floor (/ secs 60))))
+            ((< secs 86400) (format "%dh" (floor (/ secs 3600))))
+            (t (format "%dd" (floor (/ secs 86400))))))))
 
 ;;; Vterm Rendering Optimization
 
@@ -775,10 +873,13 @@ If DIRECTORY is not provided, use the current working directory."
            claude-code-ide--processes))
 
 (defun claude-code-ide--cleanup-dead-processes ()
-  "Remove entries for dead processes from the process table."
+  "Remove entries for dead processes from the process table.
+Also drops their run status so the status table can't grow without bound
+and a session restarted in the same directory begins fresh."
   (maphash (lambda (directory process)
              (unless (process-live-p process)
-               (remhash directory claude-code-ide--processes)))
+               (remhash directory claude-code-ide--processes)
+               (claude-code-ide--clear-run-status directory)))
            claude-code-ide--processes))
 
 (defun claude-code-ide--cleanup-all-sessions ()
@@ -850,6 +951,10 @@ If `claude-code-ide-focus-on-open' is non-nil, the window is selected."
         (progn
           ;; Remove from process table
           (remhash directory claude-code-ide--processes)
+          ;; Drop the run status, so a crash or interrupt that never fired the
+          ;; `Stop' hook can't leave the session stuck reporting `working', and
+          ;; a session later started in the same directory begins fresh.
+          (claude-code-ide--clear-run-status directory)
           ;; Check if this was the last session
           (when-let ((resize-handler
                       (and claude-code-ide-prevent-reflow-glitch
@@ -979,7 +1084,15 @@ Additional flags from `claude-code-ide-cli-extra-flags' are also included."
                   ;; String pattern or nil
                   (t claude-code-ide-mcp-allowed-tools))))
             (when allowed-tools
-              (setq claude-cmd (concat claude-cmd " --allowedTools " allowed-tools)))))))
+              (setq claude-cmd (concat claude-cmd " --allowedTools " allowed-tools))))
+          ;; Hand the CLI our session-status hooks (which call the
+          ;; `set_session_status' tool on the emacs-tools server configured
+          ;; above) so it reports run status to Emacs without the user having
+          ;; to wire hooks into their own settings.
+          (when (and claude-code-ide-report-status
+                     (file-exists-p claude-code-ide--status-hooks-file))
+            (setq claude-cmd (concat claude-cmd " --settings "
+                                     (shell-quote-argument claude-code-ide--status-hooks-file)))))))
     claude-cmd))
 
 (defun claude-code-ide--terminal-position-keeper (window-list)
@@ -1310,27 +1423,55 @@ If the buffer is already visible, switch focus to it."
           (claude-code-ide--display-buffer-in-side-window buffer))
       (user-error "No Claude Code session for this project.  Use M-x claude-code-ide to start one"))))
 
+(defun claude-code-ide--session-affixation (sessions)
+  "Return an affixation function for the SESSIONS alist of (DISPLAY . DIR).
+Each candidate is prefixed with its run status (face-propertized) and how
+long it has held it, so the picker shows e.g. \"blocked  2m  ~/proj\"."
+  (lambda (candidates)
+    (mapcar
+     (lambda (cand)
+       (let* ((dir (alist-get cand sessions nil nil #'string=))
+              (status (or (and dir (claude-code-ide-session-run-status dir)) "idle"))
+              (face (or (cdr (assoc status claude-code-ide--run-status-faces)) 'shadow))
+              (age (claude-code-ide--format-status-age
+                    (and dir (claude-code-ide-session-run-status-since dir)))))
+         (list cand
+               (format "%-8s %-5s "
+                       (propertize status 'face face) age)
+               "")))
+     candidates)))
+
 ;;;###autoload
 (defun claude-code-ide-list-sessions ()
-  "List all active Claude Code sessions and switch to selected one."
+  "List all active Claude Code sessions and switch to the selected one.
+Sessions are ordered by run status (blocked first, then idle, then working)
+and annotated with their status and how long they have held it."
   (interactive)
   (claude-code-ide--cleanup-dead-processes)
-  (let ((sessions '()))
+  (let (sessions)
     (maphash (lambda (directory _)
-               (push (cons (abbreviate-file-name directory)
-                           directory)
-                     sessions))
+               (push (cons (abbreviate-file-name directory) directory) sessions))
              claude-code-ide--processes)
-    (if sessions
-        (let ((choice (completing-read "Switch to Claude Code session: "
-                                       sessions nil t)))
-          (when choice
-            (let* ((directory (alist-get choice sessions nil nil #'string=))
-                   (buffer-name (funcall claude-code-ide-buffer-name-function directory)))
-              (if-let ((buffer (get-buffer buffer-name)))
-                  (claude-code-ide--display-buffer-in-side-window buffer)
-                (user-error "Buffer for session %s no longer exists" choice)))))
-      (claude-code-ide-log "No active Claude Code sessions"))))
+    (if (not sessions)
+        (claude-code-ide-log "No active Claude Code sessions")
+      ;; `sort' on a list is stable, so same-status sessions keep their order.
+      (setq sessions (sort (nreverse sessions)
+                           (lambda (a b)
+                             (< (claude-code-ide--run-status-rank (cdr a))
+                                (claude-code-ide--run-status-rank (cdr b))))))
+      (let* ((affixate (claude-code-ide--session-affixation sessions))
+             (table (lambda (string pred action)
+                      (if (eq action 'metadata)
+                          `(metadata (display-sort-function . identity)
+                                     (affixation-function . ,affixate))
+                        (complete-with-action action sessions string pred))))
+             (choice (completing-read "Switch to Claude Code session: " table nil t)))
+        (when choice
+          (let* ((directory (alist-get choice sessions nil nil #'string=))
+                 (buffer-name (funcall claude-code-ide-buffer-name-function directory)))
+            (if-let ((buffer (get-buffer buffer-name)))
+                (claude-code-ide--display-buffer-in-side-window buffer)
+              (user-error "Buffer for session %s no longer exists" choice))))))))
 
 ;;;###autoload
 ;;; Terminal interaction helpers
