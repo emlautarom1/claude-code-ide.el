@@ -787,16 +787,19 @@ Optional SESSION provides that buffer."
             (text . ,(json-encode (claude-code-ide-mcp--selection-data buffer)))))))
 
 (defun claude-code-ide-mcp-handle-get-latest-selection (_arguments)
-  "Return the most recently selected text across all file buffers."
-  (let ((data nil)
-        (latest -1))
-    (dolist (buffer (buffer-list))
+  "Return the most recently selected text across all file buffers.
+`buffer-list' is ordered most-recently-current first, so the first
+file-visiting buffer with an active region is the one the user most
+recently focused.  This uses focus recency as the ordering signal rather
+than the selection action itself, which is a close, dependency-free
+approximation."
+  (let ((data nil))
+    (cl-dolist (buffer (buffer-list))
       (with-current-buffer buffer
         (when (and (buffer-file-name)
-                   (use-region-p)
-                   (> (buffer-modified-tick) latest))
-          (setq latest (buffer-modified-tick)
-                data (claude-code-ide-mcp--selection-data buffer)))))
+                   (use-region-p))
+          (setq data (claude-code-ide-mcp--selection-data buffer))
+          (cl-return))))
     (list `((type . "text")
             (text . ,(json-encode (or data (claude-code-ide-mcp--empty-selection-data))))))))
 

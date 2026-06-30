@@ -1289,6 +1289,43 @@ have completed before cleanup.  Waits up to 5 seconds."
                                                        (should (equal (alist-get 'text data) "Alpha\n"))))
                                                  (when (buffer-live-p buf) (kill-buffer buf))))))
 
+(ert-deftest claude-code-ide-test-mcp-get-latest-selection-recency-order ()
+  "getLatestSelection follows buffer-list recency order, not edit count."
+  (claude-code-ide-mcp-tests--with-temp-file file-a "Alpha\nBeta\nGamma"
+                                             (claude-code-ide-mcp-tests--with-temp-file file-b "One\nTwo\nThree"
+                                                                                        (let ((buf-a (find-file-noselect file-a))
+                                                                                              (buf-b (find-file-noselect file-b)))
+                                                                                          (unwind-protect
+                                                                                              (let ((transient-mark-mode t))
+                                                                                                ;; Give buf-a a high modified tick, then select in it.
+                                                                                                (with-current-buffer buf-a
+                                                                                                  (goto-char (point-max))
+                                                                                                  (dotimes (_ 10) (insert "x"))
+                                                                                                  (goto-char (point-min))
+                                                                                                  (set-mark (point))
+                                                                                                  (forward-line 1)
+                                                                                                  (activate-mark))
+                                                                                                (with-current-buffer buf-b
+                                                                                                  (goto-char (point-min))
+                                                                                                  (set-mark (point))
+                                                                                                  (forward-line 1)
+                                                                                                  (activate-mark))
+                                                                                                ;; buf-b is most-recently-current (first in list), so it
+                                                                                                ;; wins even though buf-a has a far higher modified tick.
+                                                                                                (cl-letf (((symbol-function 'buffer-list)
+                                                                                                           (lambda (&optional _frame) (list buf-b buf-a))))
+                                                                                                  (let* ((result (claude-code-ide-mcp-handle-get-latest-selection nil))
+                                                                                                         (data (json-read-from-string (alist-get 'text (car result)))))
+                                                                                                    (should (equal (alist-get 'text data) "One\n"))))
+                                                                                                ;; Reversing the order makes buf-a the latest selection.
+                                                                                                (cl-letf (((symbol-function 'buffer-list)
+                                                                                                           (lambda (&optional _frame) (list buf-a buf-b))))
+                                                                                                  (let* ((result (claude-code-ide-mcp-handle-get-latest-selection nil))
+                                                                                                         (data (json-read-from-string (alist-get 'text (car result)))))
+                                                                                                    (should (equal (alist-get 'text data) "Alpha\n")))))
+                                                                                            (when (buffer-live-p buf-a) (kill-buffer buf-a))
+                                                                                            (when (buffer-live-p buf-b) (kill-buffer buf-b)))))))
+
 (ert-deftest claude-code-ide-test-mcp-get-open-editors ()
   "Test the getOpenEditors tool handler."
   (claude-code-ide-mcp-tests--with-temp-file test-file "content"
