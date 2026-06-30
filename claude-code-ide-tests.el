@@ -2351,10 +2351,29 @@ have completed before cleanup.  Waits up to 5 seconds."
     ;; Abbreviated and absolute forms normalise to the same key.
     (should (equal (claude-code-ide--session-dir-key "~/foo")
                    (claude-code-ide--session-dir-key (concat home "foo"))))
+    ;; A trailing slash is irrelevant: both forms map to the same key, so a
+    ;; status stored under one is found under the other.
+    (should (equal (claude-code-ide--session-dir-key "/path/to/proj")
+                   (claude-code-ide--session-dir-key "/path/to/proj/")))
     ;; Environment variables are substituted.
     (let ((process-environment (cons "CLAUDE_TEST_DIR=/tmp/xyz" process-environment)))
       (should (equal (claude-code-ide--session-dir-key "$CLAUDE_TEST_DIR/a")
-                     (expand-file-name "/tmp/xyz/a"))))))
+                     (claude-code-ide--session-dir-key "/tmp/xyz/a"))))))
+
+(ert-deftest claude-code-ide-test-run-status-trailing-slash ()
+  "Status writes and reads agree across trailing-slash differences."
+  (clrhash claude-code-ide--run-status-table)
+  (let ((with-slash "/tmp/ccide-slash-test/")
+        (without-slash "/tmp/ccide-slash-test"))
+    (unwind-protect
+        (progn
+          ;; Written with a trailing slash, read back without one.
+          (claude-code-ide--set-run-status with-slash "working")
+          (should (equal (claude-code-ide-session-run-status without-slash) "working"))
+          ;; And the reverse: clearing via the other form drops it for both.
+          (claude-code-ide--clear-run-status without-slash)
+          (should-not (claude-code-ide-session-run-status with-slash)))
+      (claude-code-ide--clear-run-status with-slash))))
 
 (ert-deftest claude-code-ide-test-set-run-status ()
   "Setting run status validates input and preserves SET-AT across no-ops."

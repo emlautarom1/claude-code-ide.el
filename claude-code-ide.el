@@ -356,10 +356,12 @@ doubles as the label; its value is the face used to display it.")
 
 (defun claude-code-ide--session-dir-key (directory)
   "Canonical key for DIRECTORY used to identify a session.
-Normalises any form of a path -- abbreviated (~/foo), with env vars, or
-absolute -- to one string, so writes, reads and the cleanup sweep all agree,
-and a status key matches its `claude-code-ide--processes' entry."
-  (expand-file-name (substitute-in-file-name directory)))
+Normalises any form of a path -- abbreviated (~/foo), with env vars,
+absolute, or with a trailing slash -- to one string, so writes, reads and
+the cleanup sweep all agree, and a status key matches its
+`claude-code-ide--processes' entry regardless of whether the caller
+included a trailing slash."
+  (directory-file-name (expand-file-name (substitute-in-file-name directory))))
 
 (defun claude-code-ide-session-run-status (directory)
   "Run status string recorded for session DIRECTORY, or nil if none."
