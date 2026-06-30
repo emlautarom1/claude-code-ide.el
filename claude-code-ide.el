@@ -100,6 +100,11 @@
 (declare-function ghostel-send-string "ghostel" (string))
 (declare-function ghostel--window-adjust-process-window-size "ghostel" (process windows))
 
+(declare-function flycheck-overlay-errors-at "flycheck" (pos))
+(declare-function flycheck-error-filename "flycheck" (err))
+(declare-function flycheck-error-line "flycheck" (err))
+(declare-function flycheck-error-message "flycheck" (err))
+
 ;;; Customization
 
 (defgroup claude-code-ide nil
@@ -732,17 +737,12 @@ This function binds:
 ;;; Completion Notifications
 
 (defun claude-code-ide--pulse-modeline ()
-  "Pulse the modeline to provide a visual notification."
-  (invert-face 'mode-line)
-  (run-at-time 0.1 nil
-               (lambda ()
-                 (invert-face 'mode-line)
-                 (run-at-time 0.1 nil
-                              (lambda ()
-                                (invert-face 'mode-line)
-                                (run-at-time 0.1 nil
-                                             (lambda ()
-                                               (invert-face 'mode-line))))))))
+  "Pulse the modeline to provide a visual notification.
+Invert the modeline face four times at 0.1s intervals so it flashes and
+returns to its original state."
+  (dotimes (i 4)
+    (run-at-time (* i 0.1) nil
+                 (lambda () (invert-face 'mode-line)))))
 
 (defun claude-code-ide-default-notification (title message)
   "Default notification: echo TITLE and MESSAGE and pulse the modeline."
@@ -1311,7 +1311,7 @@ This function handles:
                             nil t)
                   ;; Set up terminal keybindings
                   (claude-code-ide--setup-terminal-keybindings)
-                  ;; Set up image pasting and bell notifications
+                  ;; Set up bell-based completion notifications
                   (claude-code-ide--setup-terminal-extras)
                   ;; Add terminal-specific exit hooks
                   (cond
