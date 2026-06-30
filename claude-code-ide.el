@@ -82,6 +82,7 @@
 (declare-function vterm-send-string "vterm" (string))
 (declare-function vterm-send-escape "vterm" ())
 (declare-function vterm-send-return "vterm" ())
+(declare-function vterm-copy-mode "vterm" (&optional arg))
 (declare-function vterm--window-adjust-process-window-size "vterm" (&optional frame))
 
 ;; External function declarations for eat
@@ -89,12 +90,20 @@
 (declare-function eat-exec "eat" (buffer name command startfile &rest switches))
 (declare-function eat-term-send-string "eat" (terminal string))
 (declare-function eat-term-display-cursor "eat" (terminal))
+(declare-function eat-emacs-mode "eat" ())
+(declare-function eat-semi-char-mode "eat" ())
+(declare-function eat-term-parameter "eat" (terminal parameter))
 (declare-function eat--adjust-process-window-size "eat" (process windows))
 
 ;; External function declarations for ghostel
 (declare-function ghostel-exec "ghostel" (buffer program &optional args))
 (declare-function ghostel-send-string "ghostel" (string))
 (declare-function ghostel--window-adjust-process-window-size "ghostel" (process windows))
+
+(declare-function flycheck-overlay-errors-at "flycheck" (pos))
+(declare-function flycheck-error-filename "flycheck" (err))
+(declare-function flycheck-error-line "flycheck" (err))
+(declare-function flycheck-error-message "flycheck" (err))
 
 ;;; Customization
 
@@ -224,6 +233,34 @@ When non-nil (default), Claude Code will open an IDE diff viewer
 (ediff) when showing file changes.  When nil, Claude Code will
 display diffs in the terminal instead."
   :type 'boolean
+  :group 'claude-code-ide)
+
+(defcustom claude-code-ide-enable-resources t
+  "Whether to expose Emacs files to Claude Code as MCP resources.
+When non-nil (default), Claude Code can list and read open buffers,
+recent files, and project files via the resources/list and
+resources/read MCP methods.  Set to nil to disable resource sharing."
+  :type 'boolean
+  :group 'claude-code-ide)
+
+(defcustom claude-code-ide-large-buffer-threshold 100000
+  "Buffer size in characters above which sending requires confirmation.
+Used by `claude-code-ide-send-region' when no region is active and the
+whole buffer would be sent."
+  :type 'integer
+  :group 'claude-code-ide)
+
+(defcustom claude-code-ide-enable-notifications t
+  "Whether to notify when Claude finishes and is awaiting input.
+Notifications are triggered by the terminal bell that Claude emits when
+it needs attention.  See `claude-code-ide-notification-function'."
+  :type 'boolean
+  :group 'claude-code-ide)
+
+(defcustom claude-code-ide-notification-function #'claude-code-ide-default-notification
+  "Function called to notify the user that Claude is waiting.
+It is called with two string arguments: TITLE and MESSAGE."
+  :type 'function
   :group 'claude-code-ide)
 
 (defcustom claude-code-ide-switch-tab-on-ediff t
@@ -548,7 +585,10 @@ cursor management, and process buffering for superior user experience."
       (process-put proc 'read-output-max 4096)))
   ;; Set up rendering optimization
   (when claude-code-ide-vterm-anti-flicker
-    (advice-add 'vterm--filter :around #'claude-code-ide--vterm-smart-renderer)))
+    (advice-add 'vterm--filter :around #'claude-code-ide--vterm-smart-renderer))
+  ;; Set up bell-based completion notifications
+  (when claude-code-ide-enable-notifications
+    (advice-add 'vterm--filter :around #'claude-code-ide--vterm-bell-detector)))
 
 
 ;;; Terminal Backend Abstraction
@@ -693,6 +733,62 @@ This function binds:
   "Check if BUFFER belongs to a Claude Code session."
   (when-let ((name (if (stringp buffer) buffer (buffer-name buffer))))
     (string-prefix-p "*claude-code[" name)))
+
+;;; Completion Notifications
+
+(defun claude-code-ide--pulse-modeline ()
+  "Pulse the modeline to provide a visual notification.
+Invert the modeline face four times at 0.1s intervals so it flashes and
+returns to its original state."
+  (dotimes (i 4)
+    (run-at-time (* i 0.1) nil
+                 (lambda () (invert-face 'mode-line)))))
+
+(defun claude-code-ide-default-notification (title message)
+  "Default notification: echo TITLE and MESSAGE and pulse the modeline."
+  (message "%s: %s" title message)
+  (claude-code-ide--pulse-modeline))
+
+(defun claude-code-ide--notify (&rest _)
+  "Notify the user that Claude has finished and is awaiting input.
+Accepts and ignores any arguments so it can serve as both a terminal
+`ring-bell-function' and an eat terminal bell parameter."
+  (when claude-code-ide-enable-notifications
+    (funcall claude-code-ide-notification-function
+             "Claude Code" "Waiting for your response")))
+
+(defun claude-code-ide--vterm-bell-detector (orig-fun process input)
+  "Detect bell characters in vterm output and trigger notifications.
+ORIG-FUN is the original `vterm--filter'.  PROCESS is the vterm process.
+INPUT is the terminal output string.  Bells inside OSC title sequences
+are ignored."
+  (when (and claude-code-ide-enable-notifications
+             (string-match-p "\007" input)
+             (claude-code-ide--session-buffer-p (process-buffer process))
+             ;; Ignore bells inside OSC title sequences (ESC ] 0 ; ... BEL).
+             ;; The ESC prefix is required so that ordinary output containing
+             ;; "]0;" is not mistaken for a title sequence and silenced.
+             (not (string-match-p "\033]0;.*\007" input)))
+    (claude-code-ide--notify))
+  (funcall orig-fun process input))
+
+(defun claude-code-ide--setup-terminal-extras ()
+  "Set up bell-based completion notifications in the current Claude buffer.
+Assumes the current buffer is the Claude terminal buffer."
+  (when claude-code-ide-enable-notifications
+    (cond
+     ((eq claude-code-ide-terminal-backend 'vterm)
+      ;; vterm notifications are handled by the bell-detector filter advice,
+      ;; installed in `claude-code-ide--configure-vterm-buffer'.
+      nil)
+     ((eq claude-code-ide-terminal-backend 'eat)
+      ;; eat invokes the terminal's ring-bell-function parameter on BEL.
+      (when (and (bound-and-true-p eat-terminal) (fboundp 'eat-term-parameter))
+        (eval '(setf (eat-term-parameter eat-terminal 'ring-bell-function)
+                     #'claude-code-ide--notify)
+              t)))
+     ((eq claude-code-ide-terminal-backend 'ghostel)
+      (setq-local ring-bell-function #'claude-code-ide--notify)))))
 
 (defun claude-code-ide--terminal-reflow-filter (original-fn &rest args)
   "Filter terminal reflows to prevent height-only resize triggers.
@@ -859,6 +955,10 @@ If `claude-code-ide-focus-on-open' is non-nil, the window is selected."
                      claude-code-ide-vterm-anti-flicker
                      (= (hash-table-count claude-code-ide--processes) 0))
             (advice-remove 'vterm--filter #'claude-code-ide--vterm-smart-renderer))
+          ;; Remove vterm bell detector if no sessions remain
+          (when (and (eq claude-code-ide-terminal-backend 'vterm)
+                     (= (hash-table-count claude-code-ide--processes) 0))
+            (advice-remove 'vterm--filter #'claude-code-ide--vterm-bell-detector))
           ;; Stop MCP server for this project directory
           (claude-code-ide-mcp-stop-session directory)
           ;; Notify MCP tools server about session end with session ID
@@ -1211,6 +1311,8 @@ This function handles:
                             nil t)
                   ;; Set up terminal keybindings
                   (claude-code-ide--setup-terminal-keybindings)
+                  ;; Set up bell-based completion notifications
+                  (claude-code-ide--setup-terminal-extras)
                   ;; Add terminal-specific exit hooks
                   (cond
                    ((eq claude-code-ide-terminal-backend 'vterm)
@@ -1359,6 +1461,61 @@ and annotated with their status and how long they have held it."
               (user-error "Buffer for session %s no longer exists" choice))))))))
 
 ;;;###autoload
+;;; Terminal interaction helpers
+
+(defvar claude-code-ide-command-history nil
+  "History list for commands sent to Claude Code via the minibuffer.")
+
+(defmacro claude-code-ide--with-terminal-buffer (&rest body)
+  "Execute BODY in the current project's Claude terminal buffer.
+Signals a `user-error' when there is no session for the project."
+  (declare (indent 0))
+  `(let ((buffer-name (claude-code-ide--get-buffer-name)))
+     (if-let ((buffer (get-buffer buffer-name)))
+         (with-current-buffer buffer ,@body)
+       (user-error "No Claude Code session for this project"))))
+
+(defun claude-code-ide--send-text (text)
+  "Send TEXT followed by a return to the current project's Claude terminal.
+Returns the Claude buffer on success, signals a `user-error' otherwise."
+  (claude-code-ide--with-terminal-buffer
+   (claude-code-ide--terminal-send-string text)
+   ;; Small delay to ensure the text is processed before sending return
+   (sit-for 0.1)
+   (claude-code-ide--terminal-send-return)
+   buffer))
+
+(defun claude-code-ide--format-file-reference (&optional file-name line-start line-end)
+  "Format a file reference in the @file:line style.
+FILE-NAME defaults to the current buffer's file.  LINE-START defaults to
+the current line.  LINE-END, when given, formats a line range."
+  (let ((file (or file-name (buffer-file-name)))
+        (start (or line-start (line-number-at-pos nil t))))
+    (when file
+      (if line-end
+          (format "@%s:%d-%d" file start line-end)
+        (format "@%s:%d" file start)))))
+
+(defun claude-code-ide--format-errors-at-point ()
+  "Return a string describing diagnostics at point.
+Tries Flycheck first, then falls back to `help-at-pt' (used by Flymake
+and other systems).  Returns nil when no diagnostics are found."
+  (cond
+   ((and (featurep 'flycheck) (bound-and-true-p flycheck-mode)
+         (fboundp 'flycheck-overlay-errors-at))
+    (let ((errors (flycheck-overlay-errors-at (point))))
+      (when errors
+        (string-trim-right
+         (mapconcat (lambda (err)
+                      (format "%s:%s: %s"
+                              (flycheck-error-filename err)
+                              (flycheck-error-line err)
+                              (flycheck-error-message err)))
+                    errors "\n")))))
+   ((help-at-pt-kbd-string)
+    (substring-no-properties (help-at-pt-kbd-string)))
+   (t nil)))
+
 (defun claude-code-ide-insert-at-mentioned ()
   "Insert selected text into Claude prompt."
   (interactive)
@@ -1413,17 +1570,85 @@ Use this to balance between visual smoothness and raw responsiveness."
 When called interactively, reads a prompt from the minibuffer.
 When called programmatically, sends the given PROMPT string."
   (interactive)
-  (let ((buffer-name (claude-code-ide--get-buffer-name)))
-    (if-let ((buffer (get-buffer buffer-name)))
-        (let ((prompt-to-send (or prompt (read-string "Claude prompt: "))))
-          (when (not (string-empty-p prompt-to-send))
-            (with-current-buffer buffer
-              (claude-code-ide--terminal-send-string prompt-to-send)
-              ;; Small delay to ensure prompt text is processed before sending return
-              (sit-for 0.1)
-              (claude-code-ide--terminal-send-return))
-            (claude-code-ide-debug "Sent prompt to Claude Code: %s" prompt-to-send)))
-      (user-error "No Claude Code session for this project"))))
+  (let ((prompt-to-send (or prompt (read-string "Claude prompt: "))))
+    (unless (string-empty-p prompt-to-send)
+      (claude-code-ide--send-text prompt-to-send)
+      (claude-code-ide-debug "Sent prompt to Claude Code: %s" prompt-to-send))))
+
+;;;###autoload
+(defun claude-code-ide-send-region (&optional arg)
+  "Send the active region to Claude Code.
+If no region is active, send the whole buffer, asking for confirmation
+when it exceeds `claude-code-ide-large-buffer-threshold'.  With prefix
+ARG, prompt for instructions to prepend to the text."
+  (interactive "P")
+  (let ((text (if (use-region-p)
+                  (buffer-substring-no-properties (region-beginning) (region-end))
+                (if (and (> (buffer-size) claude-code-ide-large-buffer-threshold)
+                         (not (yes-or-no-p "Buffer is large.  Send anyway? ")))
+                    nil
+                  (buffer-substring-no-properties (point-min) (point-max))))))
+    ;; Only prompt for instructions and send when there is text to send;
+    ;; declining the large-buffer prompt leaves TEXT nil and aborts cleanly.
+    (when text
+      (let* ((instructions (when arg (read-string "Instructions for Claude: ")))
+             (full-text (if (and instructions (not (string-empty-p instructions)))
+                            (format "%s\n\n%s" instructions text)
+                          text)))
+        (claude-code-ide--send-text full-text)))))
+
+;;;###autoload
+(defun claude-code-ide-send-buffer-file ()
+  "Send a reference to the current buffer's file to Claude Code."
+  (interactive)
+  (let ((ref (claude-code-ide--format-file-reference)))
+    (unless ref
+      (user-error "Current buffer is not visiting a file"))
+    (claude-code-ide--send-text ref)))
+
+;;;###autoload
+(defun claude-code-ide-send-file (file)
+  "Send a reference to FILE to Claude Code.
+Interactively, prompt for the file."
+  (interactive "fSend file to Claude: ")
+  (claude-code-ide--send-text (format "@%s" (expand-file-name file))))
+
+;;;###autoload
+(defun claude-code-ide-send-with-context ()
+  "Read a command and send it with the current file and line as context.
+If a region is active, include its line range."
+  (interactive)
+  (let* ((cmd (read-string "Claude command: " nil 'claude-code-ide-command-history))
+         (file-ref (if (use-region-p)
+                       (claude-code-ide--format-file-reference
+                        nil
+                        (line-number-at-pos (region-beginning) t)
+                        (line-number-at-pos (region-end) t))
+                     (claude-code-ide--format-file-reference)))
+         (full (if file-ref (format "%s\n%s" cmd file-ref) cmd)))
+    (claude-code-ide--send-text full)))
+
+;;;###autoload
+(defun claude-code-ide-fix-error-at-point ()
+  "Ask Claude Code to fix the diagnostic at point.
+Supports Flycheck, Flymake, and any system implementing `help-at-pt'."
+  (interactive)
+  (let ((error-text (claude-code-ide--format-errors-at-point))
+        (file-ref (claude-code-ide--format-file-reference)))
+    (if (not error-text)
+        (message "No errors found at point")
+      (claude-code-ide--send-text
+       (format "Fix this error at %s. Do not run any external linter; just fix the error at point using the context provided in the error message: <%s>"
+               (or file-ref "the current position") error-text)))))
+
+;;;###autoload
+(defun claude-code-ide-fork ()
+  "Send escape-escape to Claude Code to jump to a previous message."
+  (interactive)
+  (claude-code-ide--with-terminal-buffer
+   (claude-code-ide--terminal-send-escape)
+   (sit-for 0.05)
+   (claude-code-ide--terminal-send-escape)))
 
 ;;;###autoload
 (defun claude-code-ide-toggle ()

@@ -35,6 +35,8 @@
 (require 'claude-code-ide-debug)
 
 (declare-function claude-code-ide-mcp-complete-deferred "claude-code-ide-mcp" (session method result &optional unique-key))
+(declare-function claude-code-ide-mcp--get-current-selection "claude-code-ide-mcp" ())
+(declare-function claude-code-ide-mcp-session-last-buffer "claude-code-ide-mcp" (session))
 (declare-function claude-code-ide-mcp--get-current-session "claude-code-ide-mcp" ())
 (declare-function claude-code-ide-mcp--get-session-for-project "claude-code-ide-mcp" (project-dir))
 (declare-function claude-code-ide-mcp--get-buffer-project "claude-code-ide-mcp" ())
@@ -53,6 +55,7 @@
 (defvar claude-code-ide-focus-claude-after-ediff)
 (defvar claude-code-ide-switch-tab-on-ediff)
 (defvar claude-code-ide-use-ide-diff)
+(defvar claude-code-ide-enable-resources)
 
 ;;; Tool Registry - Define variables first to ensure they're available
 
@@ -380,7 +383,7 @@ ARGUMENTS should contain `path' or `tab_name' of the file to close."
       (signal 'mcp-error '("Either 'path' or 'tab_name' must be provided"))))))
 
 (defun claude-code-ide-mcp-handle-open-diff (arguments)
-  "Open a diff view using ediff.
+  "Open an interactive ediff view for ARGUMENTS.
 ARGUMENTS should contain:
 - `old_file_path': Original file path
 - `new_file_path': New file path (usually same as old)
@@ -427,6 +430,14 @@ ARGUMENTS should contain:
               ;; Switch to the original tab
               (tab-bar-select-tab-by-name (alist-get 'name original-tab)))))))
 
+    (claude-code-ide-mcp--open-diff-ediff
+     old-file-path new-file-path new-file-contents tab-name session)))
+
+(defun claude-code-ide-mcp--open-diff-ediff (old-file-path new-file-path new-file-contents tab-name session)
+  "Open an interactive ediff for TAB-NAME in SESSION.
+OLD-FILE-PATH, NEW-FILE-PATH and NEW-FILE-CONTENTS describe the diff.
+Returns a deferred-response indicator."
+  (progn
     ;; Save current window configuration
     (let* ((saved-winconf (current-window-configuration))
            (buffers (claude-code-ide-mcp--create-diff-buffers
@@ -647,6 +658,126 @@ ARGUMENTS should contain:
       (error
        (signal 'mcp-error (list (format "Evaluation error: %s" (error-message-string err))))))))
 
+;;; IDE State Tools
+
+(defun claude-code-ide-mcp--selection-data (buffer)
+  "Build a selection payload for BUFFER including the `isEmpty' flag.
+Reuses `claude-code-ide-mcp--get-current-selection' and adds the
+`isEmpty' field expected by the IDE protocol."
+  (with-current-buffer buffer
+    (let* ((sel (claude-code-ide-mcp--get-current-selection))
+           (is-empty (if (use-region-p) :json-false t)))
+      `((text . ,(alist-get 'text sel))
+        (filePath . ,(alist-get 'filePath sel))
+        (selection . ,(cons `(isEmpty . ,is-empty)
+                            (alist-get 'selection sel)))))))
+
+(defun claude-code-ide-mcp--empty-selection-data ()
+  "Return an empty selection payload."
+  '((text . "")
+    (filePath . "")
+    (selection . ((start . ((line . 0) (character . 0)))
+                  (end . ((line . 0) (character . 0)))
+                  (isEmpty . t)))))
+
+(defun claude-code-ide-mcp-handle-get-current-selection (_arguments &optional session)
+  "Return the current selection.
+Operates on the session's last active file buffer when available so the
+result reflects the user's buffer rather than the Claude terminal.
+Optional SESSION provides that buffer."
+  (let* ((last-buffer (and session
+                           (claude-code-ide-mcp-session-last-buffer session)))
+         (buffer (if (and last-buffer (buffer-live-p last-buffer))
+                     last-buffer
+                   (current-buffer))))
+    (list `((type . "text")
+            (text . ,(json-encode (claude-code-ide-mcp--selection-data buffer)))))))
+
+(defun claude-code-ide-mcp-handle-get-latest-selection (_arguments)
+  "Return the most recently selected text across all file buffers.
+`buffer-list' is ordered most-recently-current first, so the first
+file-visiting buffer with an active region is the one the user most
+recently focused.  This uses focus recency as the ordering signal rather
+than the selection action itself, which is a close, dependency-free
+approximation."
+  (let ((data nil))
+    (cl-dolist (buffer (buffer-list))
+      (with-current-buffer buffer
+        (when (and (buffer-file-name)
+                   (use-region-p))
+          (setq data (claude-code-ide-mcp--selection-data buffer))
+          (cl-return))))
+    (list `((type . "text")
+            (text . ,(json-encode (or data (claude-code-ide-mcp--empty-selection-data))))))))
+
+(defun claude-code-ide-mcp-handle-get-open-editors (_arguments)
+  "Return the list of open file-visiting buffers."
+  (let ((editors '()))
+    (dolist (buffer (buffer-list))
+      (when-let ((file (buffer-file-name buffer)))
+        (push `((uri . ,(concat "file://" file))
+                (name . ,(file-name-nondirectory file))
+                (path . ,file))
+              editors)))
+    (list `((type . "text")
+            (text . ,(json-encode `((editors . ,(vconcat (nreverse editors))))))))))
+
+(defun claude-code-ide-mcp-handle-get-workspace-folders (_arguments &optional session)
+  "Return the workspace folders (project roots).
+Includes the session's project directory and the current project root.
+Optional SESSION provides the session project directory."
+  (let ((folders '())
+        (seen (make-hash-table :test 'equal)))
+    (dolist (dir (list (and session (claude-code-ide-mcp-session-project-dir session))
+                       (when-let ((project (project-current)))
+                         (project-root project))))
+      (when dir
+        (let ((root (file-name-as-directory (expand-file-name dir))))
+          (unless (gethash root seen)
+            (puthash root t seen)
+            (push `((uri . ,(concat "file://" root))
+                    (name . ,(file-name-nondirectory (directory-file-name root))))
+                  folders)))))
+    (list `((type . "text")
+            (text . ,(json-encode `((folders . ,(vconcat (nreverse folders))))))))))
+
+(defun claude-code-ide-mcp--arg-file-path (arguments)
+  "Extract a local file path from ARGUMENTS.
+Accepts `filePath', `uri', or `path', stripping a leading file:// scheme."
+  (when-let ((path (or (alist-get 'filePath arguments)
+                       (alist-get 'uri arguments)
+                       (alist-get 'path arguments))))
+    (if (string-prefix-p "file://" path)
+        (substring path 7)
+      path)))
+
+(defun claude-code-ide-mcp-handle-check-document-dirty (arguments)
+  "Report whether the document in ARGUMENTS has unsaved changes."
+  (let ((path (claude-code-ide-mcp--arg-file-path arguments)))
+    (unless path
+      (signal 'mcp-error '("Missing required parameter: filePath")))
+    (let ((buffer (find-buffer-visiting path)))
+      (list `((type . "text")
+              (text . ,(json-encode
+                        `((isDirty . ,(if (and buffer (buffer-modified-p buffer))
+                                          t
+                                        :json-false))))))))))
+
+(defun claude-code-ide-mcp-handle-save-document (arguments)
+  "Save the document referenced by ARGUMENTS to disk."
+  (let ((path (claude-code-ide-mcp--arg-file-path arguments)))
+    (unless path
+      (signal 'mcp-error '("Missing required parameter: filePath")))
+    (let ((buffer (find-buffer-visiting path)))
+      (if buffer
+          (with-current-buffer buffer
+            (save-buffer)
+            (list `((type . "text")
+                    (text . ,(json-encode '((saved . t)))))))
+        (list `((type . "text")
+                (text . ,(json-encode '((saved . :json-false)
+                                        (error . "File not open"))))))))))
+
 ;;; Tool Registry - Set the values
 
 (defun claude-code-ide-mcp--build-tool-list ()
@@ -654,6 +785,12 @@ ARGUMENTS should contain:
   `(("openFile" . claude-code-ide-mcp-handle-open-file)
     ("getDiagnostics" . claude-code-ide-mcp-handle-get-diagnostics)
     ("close_tab" . claude-code-ide-mcp-handle-close-tab)
+    ("getCurrentSelection" . claude-code-ide-mcp-handle-get-current-selection)
+    ("getLatestSelection" . claude-code-ide-mcp-handle-get-latest-selection)
+    ("getOpenEditors" . claude-code-ide-mcp-handle-get-open-editors)
+    ("getWorkspaceFolders" . claude-code-ide-mcp-handle-get-workspace-folders)
+    ("checkDocumentDirty" . claude-code-ide-mcp-handle-check-document-dirty)
+    ("saveDocument" . claude-code-ide-mcp-handle-save-document)
     ,@(when (bound-and-true-p claude-code-ide-use-ide-diff)
         '(("openDiff" . claude-code-ide-mcp-handle-open-diff)
           ("closeAllDiffTabs" . claude-code-ide-mcp-handle-close-all-diff-tabs)))
@@ -686,6 +823,22 @@ ARGUMENTS should contain:
                                    (tab_name . ((type . "string")
                                                 (description . "Name of the tab to close")))))
                     (required . [])))
+    ("getCurrentSelection" . ((type . "object")
+                              (properties . :json-empty)))
+    ("getLatestSelection" . ((type . "object")
+                             (properties . :json-empty)))
+    ("getOpenEditors" . ((type . "object")
+                         (properties . :json-empty)))
+    ("getWorkspaceFolders" . ((type . "object")
+                              (properties . :json-empty)))
+    ("checkDocumentDirty" . ((type . "object")
+                             (properties . ((filePath . ((type . "string")
+                                                         (description . "Path to the file to check")))))
+                             (required . ["filePath"])))
+    ("saveDocument" . ((type . "object")
+                       (properties . ((filePath . ((type . "string")
+                                                   (description . "Path to the file to save")))))
+                       (required . ["filePath"])))
     ,@(when (bound-and-true-p claude-code-ide-use-ide-diff)
         '(("openDiff" . ((type . "object")
                          (properties . ((old_file_path . ((type . "string")
@@ -712,6 +865,12 @@ ARGUMENTS should contain:
   `(("openFile" . "Open a file in the editor and optionally select a range of text")
     ("getDiagnostics" . "Get language diagnostics from Emacs")
     ("close_tab" . "Close a tab/buffer")
+    ("getCurrentSelection" . "Get the current text selection in the active editor")
+    ("getLatestSelection" . "Get the most recent text selection across all editors")
+    ("getOpenEditors" . "Get the list of currently open file editors")
+    ("getWorkspaceFolders" . "Get the workspace folders (project roots)")
+    ("checkDocumentDirty" . "Check whether a document has unsaved changes")
+    ("saveDocument" . "Save a document to disk")
     ,@(when (bound-and-true-p claude-code-ide-use-ide-diff)
         '(("openDiff" . "Open a diff view comparing old and new file contents")
           ("closeAllDiffTabs" . "Close all open diff tabs in the current session")))

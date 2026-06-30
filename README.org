@@ -18,10 +18,12 @@ Claude Code IDE for Emacs provides native integration with Claude Code CLI throu
 - Automatic project detection and session management
 - Terminal integration with full color support using =vterm=, =eat=, or =ghostel=
 - MCP protocol implementation for IDE integration
-- Tool support for file operations, editor state, and workspace info
+- Tool support for file operations, editor state, and workspace info (selections, open editors, workspace folders, document save/dirty state)
+- MCP resources support for sharing open buffers, recent files, and project files with Claude
+- Completion notifications when Claude finishes and awaits your input
 - Extensible MCP tools server for accessing Emacs commands (xrefs, tree-sitter, project info, e.g.)
 - Diagnostic integration with Flycheck and Flymake
-- Advanced diff view with ediff integration (modify suggestions before applying)
+- Advanced diff view with a selectable backend: interactive ediff (modify suggestions before applying) or a simple read-only diff
 - Tab-bar support for proper context switching
 - Selection and buffer tracking for better context awareness
 
@@ -141,12 +143,19 @@ The easiest way to interact with Claude Code IDE is through the transient menu i
 | =M-x claude-code-ide-list-sessions=       | List sessions (ordered by status) and switch      |
 | =M-x claude-code-ide-check-status=        | Check if Claude Code CLI is installed and working |
 | =M-x claude-code-ide-insert-at-mentioned= | Send selected text to Claude prompt               |
+| =M-x claude-code-ide-send-region=         | Send the region (or whole buffer) to Claude       |
+| =M-x claude-code-ide-send-with-context=   | Send a command with current file/line context     |
+| =M-x claude-code-ide-send-buffer-file=    | Send the current buffer's file as @reference      |
+| =M-x claude-code-ide-send-file=           | Send a chosen file as an @reference               |
+| =M-x claude-code-ide-fix-error-at-point=  | Ask Claude to fix the diagnostic at point         |
+| =M-x claude-code-ide-fork=                | Jump to a previous message (sends Escape-Escape)  |
 | =M-x claude-code-ide-send-escape=         | Send escape key to Claude terminal                |
 | =M-x claude-code-ide-insert-newline=      | Insert newline in Claude prompt (sends \ + Enter) |
 | =M-x claude-code-ide-toggle=              | Toggle visibility of Claude Code window           |
 | =M-x claude-code-ide-toggle-recent=       | Toggle most recent Claude window globally         |
 | =M-x claude-code-ide-show-debug=          | Show the debug buffer with WebSocket messages     |
 | =M-x claude-code-ide-clear-debug=         | Clear the debug buffer                            |
+| =M-x claude-code-ide-toggle-debug=        | Toggle debug logging of WebSocket/JSON-RPC        |
 
 ** Multi-Project Support
 
@@ -213,6 +222,10 @@ This allows you to refine Claude's suggestions before they're applied, ensuring 
 | ~claude-code-ide-no-flicker~                    | Enable flicker-free terminal renderer       | ~nil~                                  |
 | ~claude-code-ide-prevent-reflow-glitch~         | Prevent terminal reflow glitch (bug #1422)  | ~t~                                    |
 | ~claude-code-ide-enable-execute-code~           | Allow model to evaluate Elisp in Emacs      | ~t~                                    |
+| ~claude-code-ide-enable-resources~              | Expose files to Claude as MCP resources     | ~t~                                    |
+| ~claude-code-ide-large-buffer-threshold~        | Confirm before sending a buffer this large  | ~100000~                               |
+| ~claude-code-ide-enable-notifications~          | Notify when Claude finishes and awaits input | ~t~                                   |
+| ~claude-code-ide-notification-function~         | Function called to notify the user          | ~claude-code-ide-default-notification~ |
 
 *** Side Window Configuration
 

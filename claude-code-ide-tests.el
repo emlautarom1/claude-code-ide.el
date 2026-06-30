@@ -1249,6 +1249,208 @@ have completed before cleanup.  Waits up to 5 seconds."
   (should-error (claude-code-ide-mcp-handle-close-tab '((path . "/nonexistent/file")))
                 :type 'mcp-error))
 
+;;; Tests for IDE State Tools (Phase 1 port)
+
+(ert-deftest claude-code-ide-test-mcp-get-current-selection-tool ()
+  "Test the getCurrentSelection tool handler."
+  ;; With an active selection
+  (claude-code-ide-mcp-tests--with-temp-buffer "Line 1\nLine 2\nLine 3"
+                                               (goto-char (point-min))
+                                               (set-mark (point))
+                                               (forward-line 2)
+                                               (let ((transient-mark-mode t))
+                                                 (activate-mark)
+                                                 (let* ((result (claude-code-ide-mcp-handle-get-current-selection nil))
+                                                        (text (alist-get 'text (car result)))
+                                                        (data (json-read-from-string text)))
+                                                   (should (equal (alist-get 'type (car result)) "text"))
+                                                   (should (equal (alist-get 'text data) "Line 1\nLine 2\n"))
+                                                   (should (eq (alist-get 'isEmpty (alist-get 'selection data)) :json-false)))))
+  ;; Without a selection - isEmpty should be true
+  (claude-code-ide-mcp-tests--with-temp-buffer "Test"
+                                               (let* ((result (claude-code-ide-mcp-handle-get-current-selection nil))
+                                                      (data (json-read-from-string (alist-get 'text (car result)))))
+                                                 (should (equal (alist-get 'text data) ""))
+                                                 (should (eq (alist-get 'isEmpty (alist-get 'selection data)) t)))))
+
+(ert-deftest claude-code-ide-test-mcp-get-latest-selection-tool ()
+  "Test the getLatestSelection tool handler."
+  (claude-code-ide-mcp-tests--with-temp-file test-file "Alpha\nBeta\nGamma"
+                                             (let ((buf (find-file-noselect test-file)))
+                                               (unwind-protect
+                                                   (let ((transient-mark-mode t))
+                                                     (with-current-buffer buf
+                                                       (goto-char (point-min))
+                                                       (set-mark (point))
+                                                       (forward-line 1)
+                                                       (activate-mark))
+                                                     (let* ((result (claude-code-ide-mcp-handle-get-latest-selection nil))
+                                                            (data (json-read-from-string (alist-get 'text (car result)))))
+                                                       (should (equal (alist-get 'text data) "Alpha\n"))))
+                                                 (when (buffer-live-p buf) (kill-buffer buf))))))
+
+(ert-deftest claude-code-ide-test-mcp-get-latest-selection-recency-order ()
+  "getLatestSelection follows buffer-list recency order, not edit count."
+  (claude-code-ide-mcp-tests--with-temp-file file-a "Alpha\nBeta\nGamma"
+                                             (claude-code-ide-mcp-tests--with-temp-file file-b "One\nTwo\nThree"
+                                                                                        (let ((buf-a (find-file-noselect file-a))
+                                                                                              (buf-b (find-file-noselect file-b)))
+                                                                                          (unwind-protect
+                                                                                              (let ((transient-mark-mode t))
+                                                                                                ;; Give buf-a a high modified tick, then select in it.
+                                                                                                (with-current-buffer buf-a
+                                                                                                  (goto-char (point-max))
+                                                                                                  (dotimes (_ 10) (insert "x"))
+                                                                                                  (goto-char (point-min))
+                                                                                                  (set-mark (point))
+                                                                                                  (forward-line 1)
+                                                                                                  (activate-mark))
+                                                                                                (with-current-buffer buf-b
+                                                                                                  (goto-char (point-min))
+                                                                                                  (set-mark (point))
+                                                                                                  (forward-line 1)
+                                                                                                  (activate-mark))
+                                                                                                ;; buf-b is most-recently-current (first in list), so it
+                                                                                                ;; wins even though buf-a has a far higher modified tick.
+                                                                                                (cl-letf (((symbol-function 'buffer-list)
+                                                                                                           (lambda (&optional _frame) (list buf-b buf-a))))
+                                                                                                  (let* ((result (claude-code-ide-mcp-handle-get-latest-selection nil))
+                                                                                                         (data (json-read-from-string (alist-get 'text (car result)))))
+                                                                                                    (should (equal (alist-get 'text data) "One\n"))))
+                                                                                                ;; Reversing the order makes buf-a the latest selection.
+                                                                                                (cl-letf (((symbol-function 'buffer-list)
+                                                                                                           (lambda (&optional _frame) (list buf-a buf-b))))
+                                                                                                  (let* ((result (claude-code-ide-mcp-handle-get-latest-selection nil))
+                                                                                                         (data (json-read-from-string (alist-get 'text (car result)))))
+                                                                                                    (should (equal (alist-get 'text data) "Alpha\n")))))
+                                                                                            (when (buffer-live-p buf-a) (kill-buffer buf-a))
+                                                                                            (when (buffer-live-p buf-b) (kill-buffer buf-b)))))))
+
+(ert-deftest claude-code-ide-test-mcp-get-open-editors ()
+  "Test the getOpenEditors tool handler."
+  (claude-code-ide-mcp-tests--with-temp-file test-file "content"
+                                             (let ((buf (find-file-noselect test-file)))
+                                               (unwind-protect
+                                                   (let* ((result (claude-code-ide-mcp-handle-get-open-editors nil))
+                                                          (data (json-read-from-string (alist-get 'text (car result))))
+                                                          (editors (alist-get 'editors data)))
+                                                     (should (vectorp editors))
+                                                     (should (seq-find (lambda (e) (equal (alist-get 'path e) test-file))
+                                                                       editors)))
+                                                 (when (buffer-live-p buf) (kill-buffer buf))))))
+
+(ert-deftest claude-code-ide-test-mcp-get-workspace-folders ()
+  "Test the getWorkspaceFolders tool handler."
+  (let* ((session (make-claude-code-ide-mcp-session :project-dir "/tmp/claude-proj-xyz/"))
+         (result (claude-code-ide-mcp-handle-get-workspace-folders nil session))
+         (data (json-read-from-string (alist-get 'text (car result))))
+         (folders (alist-get 'folders data)))
+    (should (vectorp folders))
+    (should (seq-find (lambda (f) (string-match-p "claude-proj-xyz" (alist-get 'uri f)))
+                      folders))))
+
+(ert-deftest claude-code-ide-test-mcp-check-document-dirty ()
+  "Test the checkDocumentDirty tool handler."
+  (claude-code-ide-mcp-tests--with-temp-file test-file "content"
+                                             (let ((buf (find-file-noselect test-file)))
+                                               (unwind-protect
+                                                   (progn
+                                                     ;; Clean buffer
+                                                     (let ((data (json-read-from-string
+                                                                  (alist-get 'text (car (claude-code-ide-mcp-handle-check-document-dirty
+                                                                                         `((filePath . ,test-file))))))))
+                                                       (should (eq (alist-get 'isDirty data) :json-false)))
+                                                     ;; Modify, then check via file:// URI
+                                                     (with-current-buffer buf
+                                                       (goto-char (point-max))
+                                                       (insert "more"))
+                                                     (let ((data (json-read-from-string
+                                                                  (alist-get 'text (car (claude-code-ide-mcp-handle-check-document-dirty
+                                                                                         `((uri . ,(concat "file://" test-file)))))))))
+                                                       (should (eq (alist-get 'isDirty data) t))))
+                                                 (when (buffer-live-p buf)
+                                                   (with-current-buffer buf (set-buffer-modified-p nil))
+                                                   (kill-buffer buf)))))
+  ;; Missing parameter
+  (should-error (claude-code-ide-mcp-handle-check-document-dirty '())
+                :type 'mcp-error))
+
+(ert-deftest claude-code-ide-test-mcp-save-document ()
+  "Test the saveDocument tool handler."
+  (claude-code-ide-mcp-tests--with-temp-file test-file "content"
+                                             (let ((buf (find-file-noselect test-file)))
+                                               (unwind-protect
+                                                   (progn
+                                                     (with-current-buffer buf
+                                                       (goto-char (point-max))
+                                                       (insert "appended"))
+                                                     (let ((data (json-read-from-string
+                                                                  (alist-get 'text (car (claude-code-ide-mcp-handle-save-document
+                                                                                         `((filePath . ,test-file))))))))
+                                                       (should (eq (alist-get 'saved data) t))
+                                                       (should-not (buffer-modified-p buf))))
+                                                 (when (buffer-live-p buf) (kill-buffer buf)))))
+  ;; File not open returns saved:false
+  (let ((data (json-read-from-string
+               (alist-get 'text (car (claude-code-ide-mcp-handle-save-document
+                                      '((filePath . "/nonexistent/file-xyz"))))))))
+    (should (eq (alist-get 'saved data) :json-false)))
+  ;; Missing parameter
+  (should-error (claude-code-ide-mcp-handle-save-document '())
+                :type 'mcp-error))
+
+(ert-deftest claude-code-ide-test-mcp-arg-file-path ()
+  "Test file path extraction from tool arguments."
+  (should (equal (claude-code-ide-mcp--arg-file-path '((filePath . "/a/b.el"))) "/a/b.el"))
+  (should (equal (claude-code-ide-mcp--arg-file-path '((uri . "file:///a/b.el"))) "/a/b.el"))
+  (should (equal (claude-code-ide-mcp--arg-file-path '((path . "/a/b.el"))) "/a/b.el"))
+  (should-not (claude-code-ide-mcp--arg-file-path '())))
+
+;;; Tests for MCP Resources (Phase 1 port)
+
+(ert-deftest claude-code-ide-test-mcp-mime-type ()
+  "Test MIME type resolution by extension."
+  (should (equal (claude-code-ide-mcp--get-mime-type "foo.el") "text/x-elisp"))
+  (should (equal (claude-code-ide-mcp--get-mime-type "foo.py") "text/x-python"))
+  (should (equal (claude-code-ide-mcp--get-mime-type "foo.json") "application/json"))
+  (should (equal (claude-code-ide-mcp--get-mime-type "foo.unknownext") "text/plain"))
+  (should (equal (claude-code-ide-mcp--get-mime-type "noextension") "text/plain")))
+
+(ert-deftest claude-code-ide-test-mcp-resources-list ()
+  "Test that resources/list includes open file buffers."
+  (claude-code-ide-mcp-tests--with-temp-file test-file "data"
+                                             (let ((buf (find-file-noselect test-file)))
+                                               (unwind-protect
+                                                   (let* ((response (claude-code-ide-mcp--handle-resources-list 1 nil))
+                                                          (resources (alist-get 'resources (alist-get 'result response))))
+                                                     (should (vectorp resources))
+                                                     (should (seq-find (lambda (r)
+                                                                         (equal (alist-get 'uri r)
+                                                                                (concat "file://" test-file)))
+                                                                       resources)))
+                                                 (when (buffer-live-p buf) (kill-buffer buf))))))
+
+(ert-deftest claude-code-ide-test-mcp-resources-read ()
+  "Test reading a resource by file:// URI."
+  (claude-code-ide-mcp-tests--with-temp-file test-file "hello resources"
+                                             (let* ((uri (concat "file://" test-file))
+                                                    (response (claude-code-ide-mcp--handle-resources-read 1 `((uri . ,uri))))
+                                                    (contents (alist-get 'contents (alist-get 'result response)))
+                                                    (entry (aref contents 0)))
+                                               (should (equal (alist-get 'uri entry) uri))
+                                               (should (equal (alist-get 'text entry) "hello resources"))
+                                               (should (equal (alist-get 'mimeType entry) "text/plain"))))
+  ;; Non-existent resource returns an error response
+  (let ((response (claude-code-ide-mcp--handle-resources-read 1 '((uri . "file:///nonexistent/xyz")))))
+    (should (alist-get 'error response)))
+  ;; A directory URI is not a regular file and must return an error, not raise.
+  (let ((response (claude-code-ide-mcp--handle-resources-read
+                   1 `((uri . ,(concat "file://" temporary-file-directory))))))
+    (should (alist-get 'error response)))
+  ;; A URI without the file:// scheme is rejected with an error response.
+  (let ((response (claude-code-ide-mcp--handle-resources-read 1 '((uri . "http://example.com/x")))))
+    (should (alist-get 'error response))))
+
 (ert-deftest claude-code-ide-test-mcp-tool-registry ()
   "Test that all tools are properly registered."
   ;; Build expected tools list dynamically based on configuration
@@ -2342,6 +2544,206 @@ have completed before cleanup.  Waits up to 5 seconds."
           (should (not (plist-get file-path-arg :optional)))
           (should (equal (plist-get file-path-arg :description)
                          "Path to the file to analyze for symbols")))))))
+
+;;; Tests for Terminal UX Commands (Phase 2 port)
+
+(ert-deftest claude-code-ide-test-format-file-reference ()
+  "Test @file:line reference formatting."
+  (with-temp-buffer
+    (insert "a\nb\nc\n")
+    (goto-char (point-min))
+    (setq buffer-file-name "/tmp/foo.el")
+    (should (equal (claude-code-ide--format-file-reference) "@/tmp/foo.el:1"))
+    (should (equal (claude-code-ide--format-file-reference nil 2 5) "@/tmp/foo.el:2-5"))
+    (should (equal (claude-code-ide--format-file-reference "/x/y.el" 3) "@/x/y.el:3"))
+    (set-buffer-modified-p nil))
+  ;; No file -> nil
+  (with-temp-buffer
+    (should-not (claude-code-ide--format-file-reference))))
+
+(ert-deftest claude-code-ide-test-format-errors-at-point ()
+  "Test diagnostic extraction at point via help-at-pt fallback."
+  (cl-letf (((symbol-function 'help-at-pt-kbd-string) (lambda () nil)))
+    (should-not (claude-code-ide--format-errors-at-point)))
+  (cl-letf (((symbol-function 'help-at-pt-kbd-string) (lambda () "boom error")))
+    (should (equal (claude-code-ide--format-errors-at-point) "boom error"))))
+
+(ert-deftest claude-code-ide-test-send-region ()
+  "Test send-region builds the correct text."
+  (let ((sent nil))
+    (cl-letf (((symbol-function 'claude-code-ide--send-text)
+               (lambda (text) (setq sent text) nil)))
+      ;; With an active region
+      (with-temp-buffer
+        (insert "Hello\nWorld")
+        (goto-char (point-min))
+        (set-mark (point))
+        (goto-char (point-max))
+        (let ((transient-mark-mode t))
+          (activate-mark)
+          (claude-code-ide-send-region))
+        (should (equal sent "Hello\nWorld")))
+      ;; No region -> whole buffer
+      (setq sent nil)
+      (with-temp-buffer
+        (insert "Whole buffer")
+        (claude-code-ide-send-region)
+        (should (equal sent "Whole buffer"))))
+    ;; Declining a large buffer must not prompt for instructions or send.
+    (let ((sent nil)
+          (instructions-prompted nil))
+      (cl-letf (((symbol-function 'claude-code-ide--send-text)
+                 (lambda (text) (setq sent text) nil))
+                ((symbol-function 'yes-or-no-p) (lambda (&rest _) nil))
+                ((symbol-function 'read-string)
+                 (lambda (&rest _) (setq instructions-prompted t) "instr")))
+        (let ((claude-code-ide-large-buffer-threshold 1))
+          (with-temp-buffer
+            (insert "This is a large buffer")
+            ;; With prefix ARG, instructions would normally be requested.
+            (claude-code-ide-send-region t)
+            (should (null sent))
+            (should (null instructions-prompted))))))))
+
+(ert-deftest claude-code-ide-test-send-with-context ()
+  "Test send-with-context appends an @file:line reference."
+  (let ((sent nil))
+    (cl-letf (((symbol-function 'claude-code-ide--send-text)
+               (lambda (text) (setq sent text) nil))
+              ((symbol-function 'read-string) (lambda (&rest _) "do something")))
+      (with-temp-buffer
+        (insert "a\nb\nc")
+        (goto-char (point-min))
+        (setq buffer-file-name "/tmp/ctx.el")
+        (claude-code-ide-send-with-context)
+        (set-buffer-modified-p nil)
+        (should (string-prefix-p "do something" sent))
+        (should (string-match-p "@/tmp/ctx.el:1" sent))))))
+
+(ert-deftest claude-code-ide-test-send-buffer-file ()
+  "Test send-buffer-file sends the buffer's file reference."
+  (let ((sent nil))
+    (cl-letf (((symbol-function 'claude-code-ide--send-text)
+               (lambda (text) (setq sent text) nil)))
+      (with-temp-buffer
+        (insert "x")
+        (goto-char (point-min))
+        (setq buffer-file-name "/tmp/bf.el")
+        (claude-code-ide-send-buffer-file)
+        (set-buffer-modified-p nil)
+        (should (equal sent "@/tmp/bf.el:1")))
+      ;; No file -> user-error
+      (with-temp-buffer
+        (should-error (claude-code-ide-send-buffer-file) :type 'user-error)))))
+
+(ert-deftest claude-code-ide-test-send-file ()
+  "Test send-file injects an @path reference."
+  (let ((sent nil))
+    (cl-letf (((symbol-function 'claude-code-ide--send-text)
+               (lambda (text) (setq sent text) nil)))
+      (claude-code-ide-send-file "/tmp/some/file.txt")
+      (should (equal sent "@/tmp/some/file.txt")))))
+
+(ert-deftest claude-code-ide-test-fix-error-at-point ()
+  "Test fix-error-at-point only sends when a diagnostic is present."
+  (let ((sent nil))
+    (cl-letf (((symbol-function 'claude-code-ide--send-text)
+               (lambda (text) (setq sent text) nil)))
+      ;; No error -> nothing sent
+      (cl-letf (((symbol-function 'claude-code-ide--format-errors-at-point)
+                 (lambda () nil)))
+        (with-temp-buffer
+          (claude-code-ide-fix-error-at-point)
+          (should-not sent)))
+      ;; Error present -> sent text includes it
+      (cl-letf (((symbol-function 'claude-code-ide--format-errors-at-point)
+                 (lambda () "undefined var x")))
+        (with-temp-buffer
+          (insert "code")
+          (setq buffer-file-name "/tmp/err.el")
+          (claude-code-ide-fix-error-at-point)
+          (set-buffer-modified-p nil)
+          (should (string-match-p "undefined var x" sent)))))))
+
+(ert-deftest claude-code-ide-test-fork ()
+  "Test fork sends escape twice to the terminal."
+  (let ((escapes 0)
+        (bufname "*claude-test-term*"))
+    (get-buffer-create bufname)
+    (unwind-protect
+        (cl-letf (((symbol-function 'claude-code-ide--get-buffer-name)
+                   (lambda (&rest _) bufname))
+                  ((symbol-function 'claude-code-ide--terminal-send-escape)
+                   (lambda () (cl-incf escapes))))
+          (claude-code-ide-fork)
+          (should (= escapes 2)))
+      (kill-buffer bufname))))
+
+;;; Tests for Completion Notifications (Phase 3 port)
+
+(ert-deftest claude-code-ide-test-notify ()
+  "Test notification dispatch respects the enable flag."
+  (let ((called nil))
+    (cl-letf (((symbol-function 'claude-code-ide-default-notification)
+               (lambda (title msg) (setq called (list title msg)))))
+      (let ((claude-code-ide-enable-notifications t)
+            (claude-code-ide-notification-function
+             #'claude-code-ide-default-notification))
+        (claude-code-ide--notify)
+        (should called))
+      (setq called nil)
+      (let ((claude-code-ide-enable-notifications nil)
+            (claude-code-ide-notification-function
+             #'claude-code-ide-default-notification))
+        (claude-code-ide--notify)
+        (should-not called)))))
+
+(ert-deftest claude-code-ide-test-vterm-bell-detector ()
+  "Test the bell detector notifies on BEL but ignores OSC title sequences."
+  (let ((orig-calls 0) (notified 0)
+        (claude-code-ide-enable-notifications t))
+    (cl-letf (((symbol-function 'claude-code-ide--notify)
+               (lambda (&rest _) (cl-incf notified)))
+              ((symbol-function 'claude-code-ide--session-buffer-p)
+               (lambda (_buf) t))
+              ((symbol-function 'process-buffer)
+               (lambda (_p) (current-buffer))))
+      (let ((orig (lambda (_p _i) (cl-incf orig-calls))))
+        ;; Bell present -> notify and pass through
+        (claude-code-ide--vterm-bell-detector orig nil "hello\007world")
+        (should (= notified 1))
+        (should (= orig-calls 1))
+        ;; OSC title bell -> no notify, still passes through
+        (claude-code-ide--vterm-bell-detector orig nil "\033]0;title\007")
+        (should (= notified 1))
+        (should (= orig-calls 2))
+        ;; No bell -> no notify, passes through
+        (claude-code-ide--vterm-bell-detector orig nil "plain text")
+        (should (= notified 1))
+        (should (= orig-calls 3))
+        ;; A literal "]0;" without the ESC prefix is NOT an OSC title
+        ;; sequence, so a bell alongside it must still notify.
+        (claude-code-ide--vterm-bell-detector orig nil "output ]0;not-a-title\007")
+        (should (= notified 2))
+        (should (= orig-calls 4))))))
+
+;;; Tests for Debug Toggle (Phase 4 port)
+
+(ert-deftest claude-code-ide-test-toggle-debug ()
+  "Test the debug logging toggle command.
+The test suite mocks the debug module, so load the real file to test the
+real command, then restore the mock for the remaining tests."
+  (let ((mock-debug (symbol-function 'claude-code-ide-debug)))
+    (unwind-protect
+        (progn
+          (load (expand-file-name "claude-code-ide-debug.el") nil t)
+          (let ((claude-code-ide-debug nil))
+            (claude-code-ide-toggle-debug)
+            (should claude-code-ide-debug)
+            (claude-code-ide-toggle-debug)
+            (should-not claude-code-ide-debug)))
+      ;; Restore the mock so later tests are unaffected
+      (fset 'claude-code-ide-debug mock-debug))))
 
 ;;; Session Run Status Tests
 
