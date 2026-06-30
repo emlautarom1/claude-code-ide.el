@@ -1470,18 +1470,20 @@ If no region is active, send the whole buffer, asking for confirmation
 when it exceeds `claude-code-ide-large-buffer-threshold'.  With prefix
 ARG, prompt for instructions to prepend to the text."
   (interactive "P")
-  (let* ((text (if (use-region-p)
-                   (buffer-substring-no-properties (region-beginning) (region-end))
-                 (if (and (> (buffer-size) claude-code-ide-large-buffer-threshold)
-                          (not (yes-or-no-p "Buffer is large.  Send anyway? ")))
-                     nil
-                   (buffer-substring-no-properties (point-min) (point-max)))))
-         (instructions (when arg (read-string "Instructions for Claude: ")))
-         (full-text (if (and instructions (not (string-empty-p instructions)))
-                        (format "%s\n\n%s" instructions text)
-                      text)))
-    (when full-text
-      (claude-code-ide--send-text full-text))))
+  (let ((text (if (use-region-p)
+                  (buffer-substring-no-properties (region-beginning) (region-end))
+                (if (and (> (buffer-size) claude-code-ide-large-buffer-threshold)
+                         (not (yes-or-no-p "Buffer is large.  Send anyway? ")))
+                    nil
+                  (buffer-substring-no-properties (point-min) (point-max))))))
+    ;; Only prompt for instructions and send when there is text to send;
+    ;; declining the large-buffer prompt leaves TEXT nil and aborts cleanly.
+    (when text
+      (let* ((instructions (when arg (read-string "Instructions for Claude: ")))
+             (full-text (if (and instructions (not (string-empty-p instructions)))
+                            (format "%s\n\n%s" instructions text)
+                          text)))
+        (claude-code-ide--send-text full-text)))))
 
 ;;;###autoload
 (defun claude-code-ide-send-buffer-file ()

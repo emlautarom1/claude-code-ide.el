@@ -2544,7 +2544,22 @@ have completed before cleanup.  Waits up to 5 seconds."
       (with-temp-buffer
         (insert "Whole buffer")
         (claude-code-ide-send-region)
-        (should (equal sent "Whole buffer"))))))
+        (should (equal sent "Whole buffer"))))
+    ;; Declining a large buffer must not prompt for instructions or send.
+    (let ((sent nil)
+          (instructions-prompted nil))
+      (cl-letf (((symbol-function 'claude-code-ide--send-text)
+                 (lambda (text) (setq sent text) nil))
+                ((symbol-function 'yes-or-no-p) (lambda (&rest _) nil))
+                ((symbol-function 'read-string)
+                 (lambda (&rest _) (setq instructions-prompted t) "instr")))
+        (let ((claude-code-ide-large-buffer-threshold 1))
+          (with-temp-buffer
+            (insert "This is a large buffer")
+            ;; With prefix ARG, instructions would normally be requested.
+            (claude-code-ide-send-region t)
+            (should (null sent))
+            (should (null instructions-prompted))))))))
 
 (ert-deftest claude-code-ide-test-send-with-context ()
   "Test send-with-context appends an @file:line reference."
