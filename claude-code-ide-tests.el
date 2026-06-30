@@ -2343,6 +2343,205 @@ have completed before cleanup.  Waits up to 5 seconds."
           (should (equal (plist-get file-path-arg :description)
                          "Path to the file to analyze for symbols")))))))
 
+;;; Session Run Status Tests
+
+(ert-deftest claude-code-ide-test-session-dir-key ()
+  "Canonical dir keys collapse abbreviated, env-var, and absolute paths."
+  (let ((home (expand-file-name "~/")))
+    ;; Abbreviated and absolute forms normalise to the same key.
+    (should (equal (claude-code-ide--session-dir-key "~/foo")
+                   (claude-code-ide--session-dir-key (concat home "foo"))))
+    ;; A trailing slash is irrelevant: both forms map to the same key, so a
+    ;; status stored under one is found under the other.
+    (should (equal (claude-code-ide--session-dir-key "/path/to/proj")
+                   (claude-code-ide--session-dir-key "/path/to/proj/")))
+    ;; Environment variables are substituted.
+    (let ((process-environment (cons "CLAUDE_TEST_DIR=/tmp/xyz" process-environment)))
+      (should (equal (claude-code-ide--session-dir-key "$CLAUDE_TEST_DIR/a")
+                     (claude-code-ide--session-dir-key "/tmp/xyz/a"))))))
+
+(ert-deftest claude-code-ide-test-run-status-trailing-slash ()
+  "Status writes and reads agree across trailing-slash differences."
+  (clrhash claude-code-ide--run-status-table)
+  (let ((with-slash "/tmp/ccide-slash-test/")
+        (without-slash "/tmp/ccide-slash-test"))
+    (unwind-protect
+        (progn
+          ;; Written with a trailing slash, read back without one.
+          (claude-code-ide--set-run-status with-slash "working")
+          (should (equal (claude-code-ide-session-run-status without-slash) "working"))
+          ;; And the reverse: clearing via the other form drops it for both.
+          (claude-code-ide--clear-run-status without-slash)
+          (should-not (claude-code-ide-session-run-status with-slash)))
+      (claude-code-ide--clear-run-status with-slash))))
+
+(ert-deftest claude-code-ide-test-set-run-status ()
+  "Setting run status validates input and preserves SET-AT across no-ops."
+  (clrhash claude-code-ide--run-status-table)
+  (let ((dir "/tmp/ccide-status-test/"))
+    (unwind-protect
+        (progn
+          ;; Known statuses are stored verbatim and returned.
+          (should (equal (claude-code-ide--set-run-status dir "working") "working"))
+          (should (equal (claude-code-ide-session-run-status dir) "working"))
+          ;; Unknown statuses fall back to idle.
+          (should (equal (claude-code-ide--set-run-status dir "bogus") "idle"))
+          (should (equal (claude-code-ide-session-run-status dir) "idle"))
+          ;; SET-AT is preserved while the status is unchanged, restamped on a
+          ;; real transition.  Seed a distinctive old time to test this without
+          ;; depending on the clock advancing.
+          (let ((old-time '(20000 0 0 0)))
+            (puthash (claude-code-ide--session-dir-key dir)
+                     (cons "working" old-time)
+                     claude-code-ide--run-status-table)
+            (claude-code-ide--set-run-status dir "working")
+            (should (equal (claude-code-ide-session-run-status-since dir) old-time))
+            (claude-code-ide--set-run-status dir "idle")
+            (should-not (equal (claude-code-ide-session-run-status-since dir) old-time))))
+      (claude-code-ide--clear-run-status dir))))
+
+(ert-deftest claude-code-ide-test-clear-run-status ()
+  "Clearing a session's run status removes its table entry."
+  (let ((dir "/tmp/ccide-clear-test/"))
+    (claude-code-ide--set-run-status dir "blocked")
+    (should (claude-code-ide-session-run-status dir))
+    (claude-code-ide--clear-run-status dir)
+    (should-not (claude-code-ide-session-run-status dir))))
+
+(ert-deftest claude-code-ide-test-run-status-rank ()
+  "Run status ranks order blocked before idle before working."
+  (let ((dir "/tmp/ccide-rank-test/"))
+    (unwind-protect
+        (progn
+          (claude-code-ide--set-run-status dir "blocked")
+          (let ((blocked (claude-code-ide--run-status-rank dir)))
+            (claude-code-ide--set-run-status dir "idle")
+            (let ((idle (claude-code-ide--run-status-rank dir)))
+              (claude-code-ide--set-run-status dir "working")
+              (let ((working (claude-code-ide--run-status-rank dir)))
+                (should (< blocked idle))
+                (should (< idle working))))))
+      (claude-code-ide--clear-run-status dir))))
+
+(ert-deftest claude-code-ide-test-cleanup-dead-processes-clears-status ()
+  "Sweeping dead processes also drops their run status."
+  (skip-unless (executable-find "cat"))
+  (claude-code-ide-tests--clear-processes)
+  (clrhash claude-code-ide--run-status-table)
+  (let* ((dir (expand-file-name "/tmp/ccide-dead-proc/"))
+         (proc (make-process :name "ccide-dead-test" :command '("cat") :noquery t)))
+    (delete-process proc)            ; now `process-live-p' is nil
+    (puthash dir proc claude-code-ide--processes)
+    (claude-code-ide--set-run-status dir "working")
+    (should (claude-code-ide-session-run-status dir))
+    (claude-code-ide--cleanup-dead-processes)
+    (should-not (gethash dir claude-code-ide--processes))
+    (should-not (claude-code-ide-session-run-status dir))))
+
+(ert-deftest claude-code-ide-test-session-affixation ()
+  "The session affixation function prefixes candidates with their status."
+  (clrhash claude-code-ide--run-status-table)
+  (let* ((dir "/tmp/ccide-affix-test/")
+         (display (abbreviate-file-name dir))
+         (sessions (list (cons display dir))))
+    (unwind-protect
+        (progn
+          (claude-code-ide--set-run-status dir "blocked")
+          (let* ((affixate (claude-code-ide--session-affixation sessions))
+                 (entry (car (funcall affixate (list display)))))
+            (should (equal (nth 0 entry) display))           ; candidate unchanged
+            (should (string-match-p "blocked" (nth 1 entry))) ; status in prefix
+            (should (equal (nth 2 entry) ""))))              ; empty suffix
+      (claude-code-ide--clear-run-status dir))))
+
+(ert-deftest claude-code-ide-test-list-sessions-ordering ()
+  "Session ordering surfaces blocked first, then idle, then working."
+  (clrhash claude-code-ide--run-status-table)
+  (let* ((b "/tmp/ccide-sess-blocked/")
+         (i "/tmp/ccide-sess-idle/")
+         (w "/tmp/ccide-sess-working/")
+         (sessions (list (cons (abbreviate-file-name w) w)
+                         (cons (abbreviate-file-name i) i)
+                         (cons (abbreviate-file-name b) b))))
+    (unwind-protect
+        (progn
+          (claude-code-ide--set-run-status b "blocked")
+          (claude-code-ide--set-run-status i "idle")
+          (claude-code-ide--set-run-status w "working")
+          ;; Mirror the sort `claude-code-ide-list-sessions' applies.
+          (let ((sorted (sort (copy-sequence sessions)
+                              (lambda (x y)
+                                (< (claude-code-ide--run-status-rank (cdr x))
+                                   (claude-code-ide--run-status-rank (cdr y)))))))
+            (should (equal (mapcar #'cdr sorted) (list b i w)))))
+      (dolist (d (list b i w)) (claude-code-ide--clear-run-status d)))))
+
+(ert-deftest claude-code-ide-test-set-session-status-tool ()
+  "The set_session_status MCP tool records status keyed by the session dir."
+  (require 'claude-code-ide-emacs-tools)
+  (require 'claude-code-ide-mcp-server)
+  ;; Registered by setup.
+  (claude-code-ide-emacs-tools-setup)
+  (should (member "set_session_status" (claude-code-ide-mcp-server-get-tool-names)))
+  (let ((session-id "ccide-status-session")
+        (project-dir "/tmp/ccide-tool-status-test/")
+        (buffer (get-buffer-create "*ccide-status-test*")))
+    (unwind-protect
+        (progn
+          (clrhash claude-code-ide--run-status-table)
+          (claude-code-ide-mcp-server-register-session session-id project-dir buffer)
+          (let ((claude-code-ide-mcp-server--current-session-id session-id))
+            (should (equal (claude-code-ide-mcp-set-session-status "working")
+                           "status: working"))
+            (should (equal (claude-code-ide-session-run-status project-dir) "working"))
+            ;; Unknown status falls back to idle.
+            (should (equal (claude-code-ide-mcp-set-session-status "bogus")
+                           "status: idle"))
+            (should (equal (claude-code-ide-session-run-status project-dir) "idle")))
+          ;; Without a session context the tool is a harmless no-op.
+          (let ((claude-code-ide-mcp-server--current-session-id nil))
+            (should (equal (claude-code-ide-mcp-set-session-status "working")
+                           "No session context available"))))
+      (kill-buffer buffer)
+      (clrhash claude-code-ide-mcp-server--sessions)
+      (clrhash claude-code-ide--run-status-table))))
+
+(ert-deftest claude-code-ide-test-status-hooks-file ()
+  "The shipped hooks file exists and is valid JSON wiring the status tool."
+  (require 'json)
+  (should (file-exists-p claude-code-ide--status-hooks-file))
+  (let* ((data (json-read-file claude-code-ide--status-hooks-file))
+         (hooks (cdr (assq 'hooks data))))
+    (should hooks)
+    ;; All four lifecycle events are wired.
+    (dolist (event '(Notification PostToolUse Stop UserPromptSubmit))
+      (should (assq event hooks)))))
+
+(ert-deftest claude-code-ide-test-build-command-status-settings ()
+  "--settings <hooks> is added only when reporting is on and the server is up."
+  (cl-letf (((symbol-function 'claude-code-ide-mcp-server-ensure-server)
+             (lambda () t))
+            ((symbol-function 'claude-code-ide-mcp-server-get-config)
+             (lambda (&optional _id)
+               '((mcpServers . ((emacs-tools . ((type . "http")
+                                                (url . "http://localhost:1/mcp"))))))))
+            ((symbol-function 'claude-code-ide-mcp-server-get-tool-names)
+             (lambda (&optional _prefix) nil)))
+    (claude-code-ide-tests--with-mocked-cli "claude"
+                                            (let ((claude-code-ide-mcp-allowed-tools nil))
+                                              ;; Enabled: the shipped hooks file is handed to the CLI.
+                                              (let ((claude-code-ide-report-status t))
+                                                (let ((cmd (claude-code-ide--build-claude-command)))
+                                                  (should (string-match-p "--settings " cmd))
+                                                  (should (string-match-p
+                                                           (regexp-quote (file-name-nondirectory
+                                                                          claude-code-ide--status-hooks-file))
+                                                           cmd))))
+                                              ;; Disabled: no --settings flag.
+                                              (let ((claude-code-ide-report-status nil))
+                                                (should-not (string-match-p "--settings "
+                                                                            (claude-code-ide--build-claude-command))))))))
+
 (provide 'claude-code-ide-tests)
 
 ;; Local Variables:

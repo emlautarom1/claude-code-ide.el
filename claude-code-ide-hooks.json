@@ -1,0 +1,61 @@
+{
+  "hooks": {
+    "Notification": [
+      {
+        "matcher": "permission_prompt|elicitation_dialog",
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "emacs-tools",
+            "tool": "set_session_status",
+            "input": {
+              "status": "blocked"
+            }
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "emacs-tools",
+            "tool": "set_session_status",
+            "input": {
+              "status": "working"
+            }
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "emacs-tools",
+            "tool": "set_session_status",
+            "input": {
+              "status": "idle"
+            }
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "mcp_tool",
+            "server": "emacs-tools",
+            "tool": "set_session_status",
+            "input": {
+              "status": "working"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}
