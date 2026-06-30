@@ -373,6 +373,7 @@ included a trailing slash."
   (cdr (gethash (claude-code-ide--session-dir-key directory)
                 claude-code-ide--run-status-table)))
 
+;;;###autoload
 (defun claude-code-ide--set-run-status (directory status)
   "Record STATUS as the run status for session DIRECTORY.
 STATUS is one of \"idle\", \"working\", or \"blocked\"; anything else is

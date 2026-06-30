@@ -40,8 +40,10 @@
 (declare-function treesit-node-text "treesit" (node &optional no-property))
 (declare-function treesit-node-field-name "treesit" (node))
 
-;; Defined in claude-code-ide.el; required at runtime by the main package, so
-;; declared here to avoid a circular require.
+;; Defined in claude-code-ide.el.  We can't `require' it here: claude-code-ide
+;; already requires this file, so the dependency is circular.  The function
+;; carries an autoload cookie, so a call to it pulls in claude-code-ide on
+;; demand even if the tool fires before the main package has been loaded.
 (declare-function claude-code-ide--set-run-status "claude-code-ide" (directory status))
 
 ;;; Tool Functions
