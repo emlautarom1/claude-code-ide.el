@@ -698,14 +698,12 @@ This function binds:
    ((eq claude-code-ide-terminal-backend 'vterm)
     ;; For vterm, we set up local keybindings in vterm-mode-map
     (local-set-key (kbd "S-<return>") #'claude-code-ide-insert-newline)
-    (local-set-key (kbd "C-<escape>") #'claude-code-ide-send-escape)
-    (local-set-key (kbd "C-c C-r") #'claude-code-ide-toggle-read-only-mode))
+    (local-set-key (kbd "C-<escape>") #'claude-code-ide-send-escape))
    ((eq claude-code-ide-terminal-backend 'eat)
     ;; For eat, we need to modify the semi-char mode map which is the default
     ;; We use local-set-key to make it buffer-local
     (local-set-key (kbd "S-<return>") #'claude-code-ide-insert-newline)
-    (local-set-key (kbd "C-<escape>") #'claude-code-ide-send-escape)
-    (local-set-key (kbd "C-c C-r") #'claude-code-ide-toggle-read-only-mode))
+    (local-set-key (kbd "C-<escape>") #'claude-code-ide-send-escape))
    ((eq claude-code-ide-terminal-backend 'ghostel)
     (local-set-key (kbd "S-<return>") #'claude-code-ide-insert-newline)
     (local-set-key (kbd "C-<escape>") #'claude-code-ide-send-escape))
@@ -1479,9 +1477,6 @@ and annotated with their status and how long they have held it."
 (defvar claude-code-ide-command-history nil
   "History list for commands sent to Claude Code via the minibuffer.")
 
-(defvar-local claude-code-ide--read-only-active nil
-  "Whether read-only/copy mode is active in this Claude terminal buffer.")
-
 (defmacro claude-code-ide--with-terminal-buffer (&rest body)
   "Execute BODY in the current project's Claude terminal buffer.
 Signals a `user-error' when there is no session for the project."
@@ -1531,22 +1526,6 @@ and other systems).  Returns nil when no diagnostics are found."
    ((help-at-pt-kbd-string)
     (substring-no-properties (help-at-pt-kbd-string)))
    (t nil)))
-
-(defun claude-code-ide--terminal-set-read-only (enable)
-  "Enable or disable read-only/copy mode in the current terminal buffer.
-When ENABLE is non-nil, switch to a navigable read-only mode; otherwise
-return to interactive mode."
-  (cond
-   ((eq claude-code-ide-terminal-backend 'vterm)
-    (if enable (vterm-copy-mode 1) (vterm-copy-mode -1)))
-   ((eq claude-code-ide-terminal-backend 'eat)
-    (if enable
-        (when (fboundp 'eat-emacs-mode) (eat-emacs-mode))
-      (when (fboundp 'eat-semi-char-mode) (eat-semi-char-mode))))
-   ((eq claude-code-ide-terminal-backend 'ghostel)
-    (user-error "Read-only mode is not supported for the ghostel backend"))
-   (t
-    (error "Unknown terminal backend: %s" claude-code-ide-terminal-backend))))
 
 (defun claude-code-ide-insert-at-mentioned ()
   "Insert selected text into Claude prompt."
@@ -1674,39 +1653,6 @@ Supports Flycheck, Flymake, and any system implementing `help-at-pt'."
                (or file-ref "the current position") error-text)))))
 
 ;;;###autoload
-(defun claude-code-ide-send-return ()
-  "Send a lone return to Claude Code (e.g. to confirm a prompt)."
-  (interactive)
-  (claude-code-ide--with-terminal-buffer
-   (claude-code-ide--terminal-send-return)))
-
-;;;###autoload
-(defun claude-code-ide-send-1 ()
-  "Select the first option in a Claude Code numbered menu."
-  (interactive)
-  (claude-code-ide--send-text "1"))
-
-;;;###autoload
-(defun claude-code-ide-send-2 ()
-  "Select the second option in a Claude Code numbered menu."
-  (interactive)
-  (claude-code-ide--send-text "2"))
-
-;;;###autoload
-(defun claude-code-ide-send-3 ()
-  "Select the third option in a Claude Code numbered menu."
-  (interactive)
-  (claude-code-ide--send-text "3"))
-
-;;;###autoload
-(defun claude-code-ide-cycle-mode ()
-  "Send Shift-Tab to Claude Code to cycle between modes.
-Claude cycles through default, auto-accept edits, and plan modes."
-  (interactive)
-  (claude-code-ide--with-terminal-buffer
-   (claude-code-ide--terminal-send-string "\e[Z")))
-
-;;;###autoload
 (defun claude-code-ide-fork ()
   "Send escape-escape to Claude Code to jump to a previous message."
   (interactive)
@@ -1714,19 +1660,6 @@ Claude cycles through default, auto-accept edits, and plan modes."
    (claude-code-ide--terminal-send-escape)
    (sit-for 0.05)
    (claude-code-ide--terminal-send-escape)))
-
-;;;###autoload
-(defun claude-code-ide-toggle-read-only-mode ()
-  "Toggle read-only/copy mode in the Claude Code terminal buffer.
-This makes the terminal navigable for selecting text without sending
-input to Claude.  Not supported for the ghostel backend."
-  (interactive)
-  (claude-code-ide--with-terminal-buffer
-   (setq claude-code-ide--read-only-active
-         (not claude-code-ide--read-only-active))
-   (claude-code-ide--terminal-set-read-only claude-code-ide--read-only-active)
-   (message "Claude Code read-only mode %s"
-            (if claude-code-ide--read-only-active "enabled" "disabled"))))
 
 ;;;###autoload
 (defun claude-code-ide-toggle ()

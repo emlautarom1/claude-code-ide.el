@@ -2665,50 +2665,18 @@ have completed before cleanup.  Waits up to 5 seconds."
           (set-buffer-modified-p nil)
           (should (string-match-p "undefined var x" sent)))))))
 
-(ert-deftest claude-code-ide-test-send-numbered ()
-  "Test numbered menu selection commands."
-  (let ((sent nil))
-    (cl-letf (((symbol-function 'claude-code-ide--send-text)
-               (lambda (text) (setq sent text) nil)))
-      (claude-code-ide-send-1) (should (equal sent "1"))
-      (claude-code-ide-send-2) (should (equal sent "2"))
-      (claude-code-ide-send-3) (should (equal sent "3")))))
-
-(ert-deftest claude-code-ide-test-terminal-quick-keys ()
-  "Test return, cycle-mode, and fork dispatch to the terminal."
-  (let ((sent-strings '()) (returns 0) (escapes 0)
+(ert-deftest claude-code-ide-test-fork ()
+  "Test fork sends escape twice to the terminal."
+  (let ((escapes 0)
         (bufname "*claude-test-term*"))
     (get-buffer-create bufname)
     (unwind-protect
         (cl-letf (((symbol-function 'claude-code-ide--get-buffer-name)
                    (lambda (&rest _) bufname))
-                  ((symbol-function 'claude-code-ide--terminal-send-string)
-                   (lambda (s) (push s sent-strings)))
-                  ((symbol-function 'claude-code-ide--terminal-send-return)
-                   (lambda () (cl-incf returns)))
                   ((symbol-function 'claude-code-ide--terminal-send-escape)
                    (lambda () (cl-incf escapes))))
-          (claude-code-ide-send-return)
-          (should (= returns 1))
-          (claude-code-ide-cycle-mode)
-          (should (member "\e[Z" sent-strings))
           (claude-code-ide-fork)
           (should (= escapes 2)))
-      (kill-buffer bufname))))
-
-(ert-deftest claude-code-ide-test-toggle-read-only-mode ()
-  "Test read-only mode toggles its buffer-local state."
-  (let ((states '()) (bufname "*claude-test-term2*"))
-    (get-buffer-create bufname)
-    (unwind-protect
-        (cl-letf (((symbol-function 'claude-code-ide--get-buffer-name)
-                   (lambda (&rest _) bufname))
-                  ((symbol-function 'claude-code-ide--terminal-set-read-only)
-                   (lambda (enable) (push enable states))))
-          (claude-code-ide-toggle-read-only-mode)
-          (claude-code-ide-toggle-read-only-mode)
-          ;; First call enables, second disables
-          (should (equal (reverse states) '(t nil))))
       (kill-buffer bufname))))
 
 ;;; Tests for Completion Notifications (Phase 3 port)

@@ -46,13 +46,7 @@
 (declare-function claude-code-ide-send-buffer-file "claude-code-ide" ())
 (declare-function claude-code-ide-send-file "claude-code-ide" (file))
 (declare-function claude-code-ide-fix-error-at-point "claude-code-ide" ())
-(declare-function claude-code-ide-send-return "claude-code-ide" ())
-(declare-function claude-code-ide-send-1 "claude-code-ide" ())
-(declare-function claude-code-ide-send-2 "claude-code-ide" ())
-(declare-function claude-code-ide-send-3 "claude-code-ide" ())
-(declare-function claude-code-ide-cycle-mode "claude-code-ide" ())
 (declare-function claude-code-ide-fork "claude-code-ide" ())
-(declare-function claude-code-ide-toggle-read-only-mode "claude-code-ide" ())
 (declare-function claude-code-ide-toggle "claude-code-ide" ())
 (declare-function claude-code-ide-check-status "claude-code-ide" ())
 (declare-function claude-code-ide--ensure-cli "claude-code-ide" ())
@@ -361,15 +355,9 @@ Otherwise, if multiple sessions exist, prompt for selection."
     ("i" "Insert selection" claude-code-ide-insert-at-mentioned)
     ("E" "Fix error at point" claude-code-ide-fix-error-at-point)]
    ["Quick responses"
-    ("y" "Return (confirm)" claude-code-ide-send-return)
-    ("1" "Select option 1" claude-code-ide-send-1)
-    ("2" "Select option 2" claude-code-ide-send-2)
-    ("3" "Select option 3" claude-code-ide-send-3)
     ("e" "Escape" claude-code-ide-send-escape)
     ("n" "Newline" claude-code-ide-insert-newline)
-    ("m" "Cycle mode (Shift-Tab)" claude-code-ide-cycle-mode)
-    ("k" "Fork (jump back)" claude-code-ide-fork)
-    ("z" "Toggle read-only mode" claude-code-ide-toggle-read-only-mode)]])
+    ("k" "Fork (jump back)" claude-code-ide-fork)]])
 
 (transient-define-prefix claude-code-ide-config-menu ()
   "Claude Code configuration menu."

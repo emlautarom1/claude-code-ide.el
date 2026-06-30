@@ -148,11 +148,7 @@ The easiest way to interact with Claude Code IDE is through the transient menu i
 | =M-x claude-code-ide-send-buffer-file=    | Send the current buffer's file as @reference      |
 | =M-x claude-code-ide-send-file=           | Send a chosen file as an @reference               |
 | =M-x claude-code-ide-fix-error-at-point=  | Ask Claude to fix the diagnostic at point         |
-| =M-x claude-code-ide-send-return=         | Send a lone return (confirm a prompt)             |
-| =M-x claude-code-ide-send-1/2/3=          | Select option 1, 2, or 3 in a numbered menu       |
-| =M-x claude-code-ide-cycle-mode=          | Cycle Claude modes (sends Shift-Tab)              |
 | =M-x claude-code-ide-fork=                | Jump to a previous message (sends Escape-Escape)  |
-| =M-x claude-code-ide-toggle-read-only-mode= | Toggle read-only/copy mode in the terminal      |
 | =M-x claude-code-ide-send-escape=         | Send escape key to Claude terminal                |
 | =M-x claude-code-ide-insert-newline=      | Insert newline in Claude prompt (sends \ + Enter) |
 | =M-x claude-code-ide-toggle=              | Toggle visibility of Claude Code window           |
