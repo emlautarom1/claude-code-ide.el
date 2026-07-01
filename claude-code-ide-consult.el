@@ -115,6 +115,14 @@ minibuffer exits on selection."
              (when-let* ((win (get-buffer-window buf)))
                (select-window win)))))))))
 
+(defun claude-code-ide-consult--preview-only-state ()
+  "Consult state that previews sessions but does not commit focus on selection."
+  (let ((state (claude-code-ide-consult--session-state)))
+    (lambda (action dir)
+      ;; Delegate setup/preview/exit; the caller owns the final display.
+      (unless (eq action 'return)
+        (funcall state action dir)))))
+
 (defun claude-code-ide-consult--annotate (cand)
   "Annotate Claude session directory CAND with its run status and elapsed time.
 The leading space carries the `marginalia--align' text property so `marginalia'
@@ -154,7 +162,7 @@ as you move between them.  Serves as `claude-code-ide-session-read-function'."
    :require-match t
    :sort nil                 ; SESSIONS is already ordered by run status
    :history 'file-name-history
-   :state (claude-code-ide-consult--session-state)))
+   :state (claude-code-ide-consult--preview-only-state)))
 
 (with-eval-after-load 'consult
   (add-to-list 'consult-buffer-sources 'claude-code-ide-consult-source 'append)
