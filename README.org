@@ -526,17 +526,20 @@ without the status hooks.
 **** Consult integration (optional)
 
 If you use [[https://github.com/minad/consult][=consult=]] (and optionally
-[[https://github.com/minad/marginalia][=marginalia=]]), loading
-=claude-code-ide-consult= adds a session source to =consult-buffer= (narrow with
-=c=) that previews sessions in the side window and shows the same
-status/elapsed-time annotations. It also upgrades =claude-code-ide-list-sessions=
-itself to a =consult=-based picker with that same live preview, falling back to
-plain =completing-read= when =consult= is not loaded. It adds no hard dependency
-and activates only when those packages are present:
+[[https://github.com/minad/marginalia][=marginalia=]]), the integration activates
+automatically -- no extra setup required. When =consult= is loaded, a session
+source is added to =consult-buffer= (narrow with =c=) that previews sessions in
+the side window and shows status/elapsed-time annotations, and
+=claude-code-ide-list-sessions= is upgraded to a =consult=-based picker with that
+same live preview. It adds no hard dependency and falls back to plain
+=completing-read= when =consult= is not installed.
+
+To opt out and keep the plain =completing-read= picker, set
+=claude-code-ide-consult-integration= to =nil= before =consult= is loaded (for
+example via =use-package='s =:custom=):
 
 #+begin_src emacs-lisp
-(with-eval-after-load 'consult
-  (require 'claude-code-ide-consult))
+(setq claude-code-ide-consult-integration nil)
 #+end_src
 
 ** Creating Custom MCP Tools

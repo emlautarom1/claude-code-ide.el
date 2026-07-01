@@ -34,11 +34,10 @@
 ;; loaded).
 ;;
 ;; This file adds no hard dependency: the `consult' and `marginalia' hooks
-;; below only activate once those packages are loaded.  Require it from your
-;; configuration, e.g.:
-;;
-;;   (with-eval-after-load 'consult
-;;     (require 'claude-code-ide-consult))
+;; below only activate once those packages are loaded.  `claude-code-ide' loads
+;; it automatically when `consult' is present, so no manual setup is needed; set
+;; `claude-code-ide-consult-integration' to nil (before `consult' loads) to opt
+;; out and keep the plain `completing-read' picker.
 
 ;;; Code:
 
