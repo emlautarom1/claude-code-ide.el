@@ -28,15 +28,17 @@
 ;; with each session's status and how long it has held it.  Previewing a
 ;; candidate shows its Claude Code buffer in the side window.
 ;;
+;; Loading this file also upgrades `claude-code-ide-list-sessions' itself to a
+;; `consult'-based picker with the same live preview, replacing its default
+;; `completing-read' front end (which stays the fallback when `consult' is not
+;; loaded).
+;;
 ;; This file adds no hard dependency: the `consult' and `marginalia' hooks
 ;; below only activate once those packages are loaded.  Require it from your
 ;; configuration, e.g.:
 ;;
 ;;   (with-eval-after-load 'consult
 ;;     (require 'claude-code-ide-consult))
-;;
-;; The package's own `claude-code-ide-list-sessions' is already status-aware
-;; on plain `completing-read'; this file is purely additive.
 
 ;;; Code:
 
@@ -48,6 +50,7 @@
 (defvar consult-buffer-sources)
 (defvar marginalia-annotators)
 (declare-function consult-buffer "consult" (&optional sources))
+(declare-function consult--read "consult" (table &rest options))
 
 (defun claude-code-ide-consult--session-buffer (dir)
   "Return the live session buffer for display directory DIR, or nil."
@@ -113,12 +116,15 @@ minibuffer exits on selection."
                (select-window win)))))))))
 
 (defun claude-code-ide-consult--annotate (cand)
-  "Annotate Claude session directory CAND with its run status and elapsed time."
+  "Annotate Claude session directory CAND with its run status and elapsed time.
+The leading space carries the `marginalia--align' text property so `marginalia'
+aligns the status column to a common offset across candidates of differing
+width, the same way its built-in field annotators do."
   (let* ((status (or (claude-code-ide-session-run-status cand) "idle"))
          (face (or (cdr (assoc status claude-code-ide--run-status-faces)) 'shadow))
          (age (claude-code-ide--format-status-age
                (claude-code-ide-session-run-status-since cand))))
-    (concat "  "
+    (concat (propertize " " 'marginalia--align t)
             (propertize (format "%-8s" status) 'face face)
             " "
             (propertize (format "%-6s" age) 'face 'marginalia-date))))
@@ -134,8 +140,27 @@ minibuffer exits on selection."
      :hidden t)             ; surfaced in `consult-buffer' by narrowing with `c'
   "Consult source listing Claude Code IDE sessions by directory.")
 
+(defun claude-code-ide-consult--read-session (sessions)
+  "Pick a Claude session from SESSIONS with `consult--read' and live preview.
+SESSIONS is the sorted ((DISPLAY . DIR) ...) alist; returns the chosen DISPLAY.
+The candidates are the session directories -- annotated by `marginalia' with
+each session's run status and elapsed time -- and previewed in the side window
+as you move between them.  Serves as `claude-code-ide-session-read-function'."
+  (consult--read
+   (mapcar #'car sessions)
+   :prompt "Switch to "
+   :category 'claude-session
+   :require-match t
+   :sort nil                 ; SESSIONS is already ordered by run status
+   :history 'file-name-history
+   :state (claude-code-ide-consult--session-state)))
+
 (with-eval-after-load 'consult
-  (add-to-list 'consult-buffer-sources 'claude-code-ide-consult-source 'append))
+  (add-to-list 'consult-buffer-sources 'claude-code-ide-consult-source 'append)
+  ;; Route `claude-code-ide-list-sessions' through `consult' so the standalone
+  ;; picker gains the same preview as the `consult-buffer' source.
+  (setq claude-code-ide-session-read-function
+        #'claude-code-ide-consult--read-session))
 
 (with-eval-after-load 'marginalia
   (add-to-list 'marginalia-annotators

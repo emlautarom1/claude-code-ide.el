@@ -2897,6 +2897,51 @@ real command, then restore the mock for the remaining tests."
             (should (equal (mapcar #'cdr sorted) (list b i w)))))
       (dolist (d (list b i w)) (claude-code-ide--clear-run-status d)))))
 
+(ert-deftest claude-code-ide-test-list-sessions-uses-read-function ()
+  "`claude-code-ide-list-sessions' delegates picking to the read function.
+It calls `claude-code-ide-session-read-function' with the sorted sessions and
+displays the chosen session's buffer -- the seam the consult reader hooks into."
+  (claude-code-ide-tests--clear-processes)
+  (let* ((dir "/tmp/ccide-read-fn-test/")
+         (display (abbreviate-file-name dir))
+         (buffer-name (funcall claude-code-ide-buffer-name-function dir))
+         (buffer (get-buffer-create buffer-name))
+         received-sessions displayed-buffer)
+    (unwind-protect
+        (progn
+          (puthash dir buffer claude-code-ide--processes)
+          ;; Record the sessions handed to the reader and choose the first.
+          (let ((claude-code-ide-session-read-function
+                 (lambda (sessions)
+                   (setq received-sessions sessions)
+                   (caar sessions))))
+            ;; Stub the cleanup (would drop the buffer-valued entry) and the
+            ;; side-window display so the test stays headless.
+            (cl-letf (((symbol-function 'claude-code-ide--cleanup-dead-processes)
+                       #'ignore)
+                      ((symbol-function 'claude-code-ide--display-buffer-in-side-window)
+                       (lambda (buf) (setq displayed-buffer buf))))
+              (claude-code-ide-list-sessions)))
+          (should (assoc display received-sessions)) ; reader saw our session
+          (should (eq displayed-buffer buffer)))     ; its buffer was displayed
+      (claude-code-ide-tests--clear-processes)
+      (when (buffer-live-p buffer) (kill-buffer buffer)))))
+
+(ert-deftest claude-code-ide-test-consult-annotate-alignment ()
+  "The consult annotator marks its leading space for `marginalia' alignment.
+This lets the status column line up across directories of differing width."
+  (require 'claude-code-ide-consult)
+  (clrhash claude-code-ide--run-status-table)
+  (let ((dir "/tmp/ccide-consult-annot/"))
+    (unwind-protect
+        (progn
+          (claude-code-ide--set-run-status dir "blocked")
+          (let ((ann (claude-code-ide-consult--annotate (abbreviate-file-name dir))))
+            ;; The first character is the alignment marker marginalia looks for.
+            (should (eq (get-text-property 0 'marginalia--align ann) t))
+            (should (string-match-p "blocked" ann))))
+      (claude-code-ide--clear-run-status dir))))
+
 (ert-deftest claude-code-ide-test-set-session-status-tool ()
   "The set_session_status MCP tool records status keyed by the session dir."
   (require 'claude-code-ide-emacs-tools)
