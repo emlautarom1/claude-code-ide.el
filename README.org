@@ -150,7 +150,7 @@ The easiest way to interact with Claude Code IDE is through the transient menu i
 | =M-x claude-code-ide-fix-error-at-point=  | Ask Claude to fix the diagnostic at point         |
 | =M-x claude-code-ide-fork=                | Jump to a previous message (sends Escape-Escape)  |
 | =M-x claude-code-ide-send-escape=         | Send escape key to Claude terminal                |
-| =M-x claude-code-ide-insert-newline=      | Insert newline in Claude prompt (sends \ + Enter) |
+| =M-x claude-code-ide-insert-newline=      | Insert newline in Claude prompt (sends M-RET)     |
 | =M-x claude-code-ide-toggle=              | Toggle visibility of Claude Code window           |
 | =M-x claude-code-ide-toggle-recent=       | Toggle most recent Claude window globally         |
 | =M-x claude-code-ide-show-debug=          | Show the debug buffer with WebSocket messages     |
