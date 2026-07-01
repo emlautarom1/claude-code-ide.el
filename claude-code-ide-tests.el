@@ -225,6 +225,17 @@ executes TEST-BODY, and ensures cleanup even if TEST-BODY fails."
           (funcall test-body))
       (delete-directory temp-dir t))))
 
+(defmacro claude-code-ide-tests--with-temp-config-dir (&rest body)
+  "Run BODY with `CLAUDE_CONFIG_DIR' pointed at a fresh writable temp dir.
+Ensures MCP lockfile creation does not depend on a writable `~/.claude/ide/'."
+  (declare (indent 0))
+  `(let* ((config-dir (make-temp-file "claude-code-ide-config-" t))
+          (process-environment
+           (cons (format "CLAUDE_CONFIG_DIR=%s" config-dir) process-environment)))
+     (unwind-protect
+         (progn ,@body)
+       (delete-directory config-dir t))))
+
 (defun claude-code-ide-tests--clear-processes ()
   "Clear the process hash table for testing.
 Ensures a clean state before each test that involves process management."
@@ -1062,16 +1073,17 @@ have completed before cleanup.  Waits up to 5 seconds."
               ((symbol-function 'tab-bar--current-tab)
                (lambda () mock-tab))
               (tab-bar-mode tab-bar-mode-enabled))
-      ;; Start MCP server
-      (let ((port (claude-code-ide-mcp-start temp-dir)))
-        (should port)
-        ;; Get the session
-        (let ((session (gethash temp-dir claude-code-ide-mcp--sessions)))
-          (should session)
-          ;; Check that tab was captured
-          (should (equal (claude-code-ide-mcp-session-original-tab session) mock-tab))))
-      ;; Cleanup
-      (claude-code-ide-mcp-stop-session temp-dir))
+      (claude-code-ide-tests--with-temp-config-dir
+       ;; Start MCP server
+       (let ((port (claude-code-ide-mcp-start temp-dir)))
+         (should port)
+         ;; Get the session
+         (let ((session (gethash temp-dir claude-code-ide-mcp--sessions)))
+           (should session)
+           ;; Check that tab was captured
+           (should (equal (claude-code-ide-mcp-session-original-tab session) mock-tab))))
+       ;; Cleanup
+       (claude-code-ide-mcp-stop-session temp-dir)))
     ;; Cleanup temp directory
     (delete-directory temp-dir t)))
 
@@ -1556,24 +1568,43 @@ have completed before cleanup.  Waits up to 5 seconds."
   (should-error (claude-code-ide-mcp-handle-execute-code '((code . "(error \"boom\")")))
                 :type 'mcp-error))
 
+(ert-deftest claude-code-ide-test-mcp-lockfile-directory-resolution ()
+  "Test that the lockfile directory honors `CLAUDE_CONFIG_DIR'."
+  (require 'claude-code-ide-mcp)
+  ;; Unset: defaults to ~/.claude/ide/.
+  (let ((process-environment (cons "CLAUDE_CONFIG_DIR" process-environment)))
+    (should (equal (claude-code-ide-mcp--lockfile-directory)
+                   (expand-file-name "~/.claude/ide/"))))
+  ;; Set without a trailing slash: still resolves under that directory.
+  (let ((process-environment (cons "CLAUDE_CONFIG_DIR=/tmp/cc-config" process-environment)))
+    (should (equal (claude-code-ide-mcp--lockfile-directory)
+                   "/tmp/cc-config/ide/")))
+  ;; Set but empty: treated as unset, must not resolve relative to
+  ;; `default-directory'.
+  (let ((process-environment (cons "CLAUDE_CONFIG_DIR=" process-environment))
+        (default-directory "/some/project/"))
+    (should (equal (claude-code-ide-mcp--lockfile-directory)
+                   (expand-file-name "~/.claude/ide/")))))
+
 (ert-deftest claude-code-ide-test-mcp-server-lifecycle ()
   "Test MCP server start and stop."
   (require 'claude-code-ide-mcp)
-  (unwind-protect
-      (progn
-        ;; Start server
-        (let ((port (claude-code-ide-mcp-start)))
-          (should (numberp port))
-          (should (>= port 10000))
-          (should (<= port 65535))
-          ;; Check lockfile exists
-          (should (file-exists-p (claude-code-ide-mcp--lockfile-path port)))
-          ;; Stop server
-          (claude-code-ide-mcp-stop)
-          ;; Check lockfile removed
-          (should-not (file-exists-p (claude-code-ide-mcp--lockfile-path port)))))
-    ;; Ensure cleanup
-    (claude-code-ide-mcp-stop)))
+  (claude-code-ide-tests--with-temp-config-dir
+   (unwind-protect
+       (progn
+         ;; Start server
+         (let ((port (claude-code-ide-mcp-start)))
+           (should (numberp port))
+           (should (>= port 10000))
+           (should (<= port 65535))
+           ;; Check lockfile exists
+           (should (file-exists-p (claude-code-ide-mcp--lockfile-path port)))
+           ;; Stop server
+           (claude-code-ide-mcp-stop)
+           ;; Check lockfile removed
+           (should-not (file-exists-p (claude-code-ide-mcp--lockfile-path port)))))
+     ;; Ensure cleanup
+     (claude-code-ide-mcp-stop))))
 
 (ert-deftest claude-code-ide-test-ide-connected-notification ()
   "Test that ide_connected notification stores the CLI PID."
@@ -1980,65 +2011,66 @@ have completed before cleanup.  Waits up to 5 seconds."
     (cl-letf* (((symbol-function 'websocket-send-text)
                 (lambda (_ws text)
                   (push text sent-responses))))
-      (unwind-protect
-          (progn
-            ;; Create two sessions
-            (make-directory project-a t)
-            (make-directory project-b t)
+      (claude-code-ide-tests--with-temp-config-dir
+       (unwind-protect
+           (progn
+             ;; Create two sessions
+             (make-directory project-a t)
+             (make-directory project-b t)
 
-            ;; Session A
-            (let ((default-directory project-a))
-              (claude-code-ide-mcp-start project-a)
-              (setq session-a (gethash project-a claude-code-ide-mcp--sessions)))
+             ;; Session A
+             (let ((default-directory project-a))
+               (claude-code-ide-mcp-start project-a)
+               (setq session-a (gethash project-a claude-code-ide-mcp--sessions)))
 
-            ;; Session B
-            (let ((default-directory project-b))
-              (claude-code-ide-mcp-start project-b)
-              (setq session-b (gethash project-b claude-code-ide-mcp--sessions)))
+             ;; Session B
+             (let ((default-directory project-b))
+               (claude-code-ide-mcp-start project-b)
+               (setq session-b (gethash project-b claude-code-ide-mcp--sessions)))
 
-            ;; Set up mock clients for each session
-            (setf (claude-code-ide-mcp-session-client session-a) :mock-client-a)
-            (setf (claude-code-ide-mcp-session-client session-b) :mock-client-b)
+             ;; Set up mock clients for each session
+             (setf (claude-code-ide-mcp-session-client session-a) :mock-client-a)
+             (setf (claude-code-ide-mcp-session-client session-b) :mock-client-b)
 
-            ;; Store deferred responses in each session
-            (let ((deferred-a (claude-code-ide-mcp-session-deferred session-a))
-                  (deferred-b (claude-code-ide-mcp-session-deferred session-b)))
-              ;; Session A has a deferred response for openDiff-diff1
-              (puthash "openDiff-diff1" "request-id-1" deferred-a)
-              ;; Session B has a deferred response for openDiff-diff2
-              (puthash "openDiff-diff2" "request-id-2" deferred-b))
+             ;; Store deferred responses in each session
+             (let ((deferred-a (claude-code-ide-mcp-session-deferred session-a))
+                   (deferred-b (claude-code-ide-mcp-session-deferred session-b)))
+               ;; Session A has a deferred response for openDiff-diff1
+               (puthash "openDiff-diff1" "request-id-1" deferred-a)
+               ;; Session B has a deferred response for openDiff-diff2
+               (puthash "openDiff-diff2" "request-id-2" deferred-b))
 
-            ;; Complete deferred response for session A
-            (claude-code-ide-mcp-complete-deferred session-a
-                                                   "openDiff"
-                                                   '(((type . "text") (text . "FILE_SAVED")))
-                                                   "diff1")
+             ;; Complete deferred response for session A
+             (claude-code-ide-mcp-complete-deferred session-a
+                                                    "openDiff"
+                                                    '(((type . "text") (text . "FILE_SAVED")))
+                                                    "diff1")
 
-            ;; Complete deferred response for session B
-            (claude-code-ide-mcp-complete-deferred session-b
-                                                   "openDiff"
-                                                   '(((type . "text") (text . "DIFF_REJECTED")))
-                                                   "diff2")
+             ;; Complete deferred response for session B
+             (claude-code-ide-mcp-complete-deferred session-b
+                                                    "openDiff"
+                                                    '(((type . "text") (text . "DIFF_REJECTED")))
+                                                    "diff2")
 
-            ;; Verify both responses were sent
-            (should (= (length sent-responses) 2))
+             ;; Verify both responses were sent
+             (should (= (length sent-responses) 2))
 
-            ;; Verify the responses contain the correct request IDs
-            (let ((response1 (json-read-from-string (nth 1 sent-responses)))
-                  (response2 (json-read-from-string (nth 0 sent-responses))))
-              ;; Check that request-id-1 and request-id-2 were both used
-              (let ((ids (list (alist-get 'id response1) (alist-get 'id response2))))
-                (should (member "request-id-1" ids))
-                (should (member "request-id-2" ids))))
+             ;; Verify the responses contain the correct request IDs
+             (let ((response1 (json-read-from-string (nth 1 sent-responses)))
+                   (response2 (json-read-from-string (nth 0 sent-responses))))
+               ;; Check that request-id-1 and request-id-2 were both used
+               (let ((ids (list (alist-get 'id response1) (alist-get 'id response2))))
+                 (should (member "request-id-1" ids))
+                 (should (member "request-id-2" ids))))
 
-            ;; Verify deferred responses were removed from sessions
-            (should (= 0 (hash-table-count (claude-code-ide-mcp-session-deferred session-a))))
-            (should (= 0 (hash-table-count (claude-code-ide-mcp-session-deferred session-b)))))
+             ;; Verify deferred responses were removed from sessions
+             (should (= 0 (hash-table-count (claude-code-ide-mcp-session-deferred session-a))))
+             (should (= 0 (hash-table-count (claude-code-ide-mcp-session-deferred session-b)))))
 
-        ;; Cleanup
-        (ignore-errors (delete-directory project-a t))
-        (ignore-errors (delete-directory project-b t))
-        (clrhash claude-code-ide-mcp--sessions)))))
+         ;; Cleanup
+         (ignore-errors (delete-directory project-a t))
+         (ignore-errors (delete-directory project-b t))
+         (clrhash claude-code-ide-mcp--sessions))))))
 
 ;;; MCP Tools Server Tests
 
