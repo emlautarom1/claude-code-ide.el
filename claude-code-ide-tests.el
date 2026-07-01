@@ -2948,18 +2948,30 @@ This lets the status column line up across directories of differing width."
   (should (eq (default-value 'claude-code-ide-consult-integration) t)))
 
 (ert-deftest claude-code-ide-test-consult-integration-toggle ()
-  "Auto-load of the consult integration respects the opt-out toggle.
-Exercises the guard the `with-eval-after-load' hook runs, with `require' stubbed
-so the check works without `consult' installed."
-  (dolist (case '((nil . nil) (t . t)))
-    (let ((claude-code-ide-consult-integration (car case))
-          (loaded nil))
-      (cl-letf (((symbol-function 'require)
-                 (lambda (feat &rest _)
-                   (when (eq feat 'claude-code-ide-consult) (setq loaded t)))))
-        (when claude-code-ide-consult-integration
-          (require 'claude-code-ide-consult)))
-      (should (eq loaded (cdr case))))))
+  "The `consult' after-load hook auto-loads the integration per the opt-out toggle.
+Runs the actual form `claude-code-ide' registers in `after-load-alist' (not a
+re-implementation), so removing or mis-wiring the auto-load is caught.  `require'
+is stubbed so the hook can run without `consult' installed; `consult-buffer-sources'
+is bound (via `cl-progv', since the consult file only declares it file-locally
+special) and `claude-code-ide-session-read-function' shadowed, so running a
+co-registered `claude-code-ide-consult' hook has no real `consult' and no lasting
+side effects."
+  (let ((hooks (cdr (assq 'consult after-load-alist)))
+        (orig-require (symbol-function 'require))
+        (claude-code-ide-session-read-function claude-code-ide-session-read-function))
+    ;; The auto-load form must be registered, else the integration never loads.
+    (should hooks)
+    (dolist (case '((nil . nil) (t . t)))
+      (let ((claude-code-ide-consult-integration (car case))
+            (loaded nil))
+        (cl-letf (((symbol-function 'require)
+                   (lambda (feature &rest args)
+                     (if (eq feature 'claude-code-ide-consult)
+                         (setq loaded t)
+                       (apply orig-require feature args)))))
+          (cl-progv '(consult-buffer-sources) (list nil)
+            (dolist (hook hooks) (funcall hook))))
+        (should (eq loaded (cdr case)))))))
 
 (ert-deftest claude-code-ide-test-set-session-status-tool ()
   "The set_session_status MCP tool records status keyed by the session dir."
