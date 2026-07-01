@@ -538,6 +538,25 @@ have completed before cleanup.  Waits up to 5 seconds."
           (should (null sent-string))
           (should (null sent-return)))))))
 
+(ert-deftest claude-code-ide-test-insert-newline-command ()
+  "Test the claude-code-ide-insert-newline command."
+  (let ((sent-string nil))
+    (cl-letf (((symbol-function 'claude-code-ide--get-buffer-name)
+               (lambda () "*test-claude-buffer*"))
+              ((symbol-function 'claude-code-ide--terminal-send-string)
+               (lambda (str) (setq sent-string str))))
+
+      ;; With an existing session buffer, send Meta-Return (ESC + CR).
+      (with-temp-buffer
+        (rename-buffer "*test-claude-buffer*")
+        (claude-code-ide-insert-newline)
+        (should (equal sent-string "\e\r")))
+
+      ;; With no session buffer, signal a user error and send nothing.
+      (setq sent-string nil)
+      (should-error (claude-code-ide-insert-newline) :type 'user-error)
+      (should (null sent-string)))))
+
 (ert-deftest claude-code-ide-test-terminal-session-creation ()
   "Test terminal session creation with both backends."
   (let ((mock-vterm-buffer nil)
