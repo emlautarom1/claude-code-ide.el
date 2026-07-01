@@ -1723,4 +1723,13 @@ If no Claude windows are visible, show the most recently accessed one."
 
 (provide 'claude-code-ide)
 
+;; Auto-load the optional `consult' integration when `consult' is present, so it
+;; works without extra user configuration.  Guarded by
+;; `claude-code-ide-consult-integration' and placed after `provide' so the
+;; `(require 'claude-code-ide)' at the top of `claude-code-ide-consult' is a
+;; no-op rather than re-entering this file when `consult' is already loaded.
+(with-eval-after-load 'consult
+  (when claude-code-ide-consult-integration
+    (require 'claude-code-ide-consult)))
+
 ;;; claude-code-ide.el ends here
