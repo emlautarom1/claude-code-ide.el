@@ -1431,8 +1431,8 @@ long it has held it, so the picker shows e.g. \"blocked  2m  ~/proj\"."
 (defun claude-code-ide--read-session-completing (sessions)
   "Choose a session from SESSIONS with `completing-read'.
 SESSIONS is the sorted alist of (DISPLAY . DIR); returns the chosen DISPLAY
-string, or nil.  Each candidate is prefixed with its run status and how long
-it has held it via `claude-code-ide--session-affixation'."
+string.  Each candidate is prefixed with its run status and how long it has
+held it via `claude-code-ide--session-affixation'."
   (let* ((affixate (claude-code-ide--session-affixation sessions))
          (table (lambda (string pred action)
                   (if (eq action 'metadata)
@@ -1445,9 +1445,9 @@ it has held it via `claude-code-ide--session-affixation'."
   #'claude-code-ide--read-session-completing
   "Function used to pick a session in `claude-code-ide-list-sessions'.
 Called with the sorted SESSIONS alist of (DISPLAY . DIR); it returns the
-chosen DISPLAY string, or nil.  Defaults to a `completing-read' picker;
-loading `claude-code-ide-consult' replaces it with a `consult'-based picker
-that adds live preview.")
+chosen DISPLAY string.  Defaults to a `completing-read' picker; loading
+`claude-code-ide-consult' replaces it with a `consult'-based picker that adds
+live preview.")
 
 ;;;###autoload
 (defun claude-code-ide-list-sessions ()
