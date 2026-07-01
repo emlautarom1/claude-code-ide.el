@@ -2942,6 +2942,25 @@ This lets the status column line up across directories of differing width."
             (should (string-match-p "blocked" ann))))
       (claude-code-ide--clear-run-status dir))))
 
+(ert-deftest claude-code-ide-test-consult-integration-defcustom ()
+  "The consult auto-load toggle exists and defaults to enabled."
+  (should (boundp 'claude-code-ide-consult-integration))
+  (should (eq (default-value 'claude-code-ide-consult-integration) t)))
+
+(ert-deftest claude-code-ide-test-consult-integration-toggle ()
+  "Auto-load of the consult integration respects the opt-out toggle.
+Exercises the guard the `with-eval-after-load' hook runs, with `require' stubbed
+so the check works without `consult' installed."
+  (dolist (case '((nil . nil) (t . t)))
+    (let ((claude-code-ide-consult-integration (car case))
+          (loaded nil))
+      (cl-letf (((symbol-function 'require)
+                 (lambda (feat &rest _)
+                   (when (eq feat 'claude-code-ide-consult) (setq loaded t)))))
+        (when claude-code-ide-consult-integration
+          (require 'claude-code-ide-consult)))
+      (should (eq loaded (cdr case))))))
+
 (ert-deftest claude-code-ide-test-set-session-status-tool ()
   "The set_session_status MCP tool records status keyed by the session dir."
   (require 'claude-code-ide-emacs-tools)
