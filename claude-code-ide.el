@@ -1439,7 +1439,7 @@ it has held it via `claude-code-ide--session-affixation'."
                       `(metadata (display-sort-function . identity)
                                  (affixation-function . ,affixate))
                     (complete-with-action action sessions string pred)))))
-    (completing-read "Switch to Claude Code session: " table nil t)))
+    (completing-read "Switch to: " table nil t)))
 
 (defvar claude-code-ide-session-read-function
   #'claude-code-ide--read-session-completing

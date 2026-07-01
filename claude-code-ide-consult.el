@@ -125,6 +125,7 @@ width, the same way its built-in field annotators do."
          (age (claude-code-ide--format-status-age
                (claude-code-ide-session-run-status-since cand))))
     (concat (propertize " " 'marginalia--align t)
+            " "
             (propertize (format "%-8s" status) 'face face)
             " "
             (propertize (format "%-6s" age) 'face 'marginalia-date))))
@@ -148,7 +149,7 @@ each session's run status and elapsed time -- and previewed in the side window
 as you move between them.  Serves as `claude-code-ide-session-read-function'."
   (consult--read
    (mapcar #'car sessions)
-   :prompt "Switch to "
+   :prompt "Switch to: "
    :category 'claude-session
    :require-match t
    :sort nil                 ; SESSIONS is already ordered by run status
