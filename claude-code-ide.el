@@ -1428,11 +1428,34 @@ long it has held it, so the picker shows e.g. \"blocked  2m  ~/proj\"."
                "")))
      candidates)))
 
+(defun claude-code-ide--read-session-completing (sessions)
+  "Choose a session from SESSIONS with `completing-read'.
+SESSIONS is the sorted alist of (DISPLAY . DIR); returns the chosen DISPLAY
+string.  Each candidate is prefixed with its run status and how long it has
+held it via `claude-code-ide--session-affixation'."
+  (let* ((affixate (claude-code-ide--session-affixation sessions))
+         (table (lambda (string pred action)
+                  (if (eq action 'metadata)
+                      `(metadata (display-sort-function . identity)
+                                 (affixation-function . ,affixate))
+                    (complete-with-action action sessions string pred)))))
+    (completing-read "Switch to: " table nil t)))
+
+(defvar claude-code-ide-session-read-function
+  #'claude-code-ide--read-session-completing
+  "Function used to pick a session in `claude-code-ide-list-sessions'.
+Called with the sorted SESSIONS alist of (DISPLAY . DIR); it returns the
+chosen DISPLAY string.  Defaults to a `completing-read' picker; loading
+`claude-code-ide-consult' replaces it with a `consult'-based picker that adds
+live preview.")
+
 ;;;###autoload
 (defun claude-code-ide-list-sessions ()
   "List all active Claude Code sessions and switch to the selected one.
 Sessions are ordered by run status (blocked first, then idle, then working)
-and annotated with their status and how long they have held it."
+and annotated with their status and how long they have held it.  The picker
+is `claude-code-ide-session-read-function'; loading `claude-code-ide-consult'
+upgrades it to a `consult'-based one with live preview."
   (interactive)
   (claude-code-ide--cleanup-dead-processes)
   (let (sessions)
@@ -1446,13 +1469,7 @@ and annotated with their status and how long they have held it."
                            (lambda (a b)
                              (< (claude-code-ide--run-status-rank (cdr a))
                                 (claude-code-ide--run-status-rank (cdr b))))))
-      (let* ((affixate (claude-code-ide--session-affixation sessions))
-             (table (lambda (string pred action)
-                      (if (eq action 'metadata)
-                          `(metadata (display-sort-function . identity)
-                                     (affixation-function . ,affixate))
-                        (complete-with-action action sessions string pred))))
-             (choice (completing-read "Switch to Claude Code session: " table nil t)))
+      (let ((choice (funcall claude-code-ide-session-read-function sessions)))
         (when choice
           (let* ((directory (alist-get choice sessions nil nil #'string=))
                  (buffer-name (funcall claude-code-ide-buffer-name-function directory)))

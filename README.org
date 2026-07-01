@@ -529,8 +529,10 @@ If you use [[https://github.com/minad/consult][=consult=]] (and optionally
 [[https://github.com/minad/marginalia][=marginalia=]]), loading
 =claude-code-ide-consult= adds a session source to =consult-buffer= (narrow with
 =c=) that previews sessions in the side window and shows the same
-status/elapsed-time annotations. It adds no hard dependency and activates only
-when those packages are present:
+status/elapsed-time annotations. It also upgrades =claude-code-ide-list-sessions=
+itself to a =consult=-based picker with that same live preview, falling back to
+plain =completing-read= when =consult= is not loaded. It adds no hard dependency
+and activates only when those packages are present:
 
 #+begin_src emacs-lisp
 (with-eval-after-load 'consult
