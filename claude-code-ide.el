@@ -157,6 +157,17 @@ events.  The status is shown in `claude-code-ide-list-sessions'."
   :type 'boolean
   :group 'claude-code-ide)
 
+(defcustom claude-code-ide-consult-integration t
+  "Whether to auto-enable the optional `consult' integration when available.
+When non-nil and `consult' is loaded, `claude-code-ide' automatically loads
+`claude-code-ide-consult', adding a Claude session source to `consult-buffer'
+(narrow with `c') and upgrading `claude-code-ide-list-sessions' to a
+`consult'-based picker with live preview.  When `marginalia' is also loaded,
+sessions gain status/elapsed-time annotations.  Set this to nil before `consult'
+is loaded to keep the plain `completing-read' picker."
+  :type 'boolean
+  :group 'claude-code-ide)
+
 (defcustom claude-code-ide-system-prompt nil
   "System prompt to append to Claude's default system prompt.
 When non-nil, the --append-system-prompt flag will be added with this value.
