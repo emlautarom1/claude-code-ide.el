@@ -1568,6 +1568,24 @@ have completed before cleanup.  Waits up to 5 seconds."
   (should-error (claude-code-ide-mcp-handle-execute-code '((code . "(error \"boom\")")))
                 :type 'mcp-error))
 
+(ert-deftest claude-code-ide-test-mcp-lockfile-directory-resolution ()
+  "Test that the lockfile directory honors `CLAUDE_CONFIG_DIR'."
+  (require 'claude-code-ide-mcp)
+  ;; Unset: defaults to ~/.claude/ide/.
+  (let ((process-environment (cons "CLAUDE_CONFIG_DIR" process-environment)))
+    (should (equal (claude-code-ide-mcp--lockfile-directory)
+                   (expand-file-name "~/.claude/ide/"))))
+  ;; Set without a trailing slash: still resolves under that directory.
+  (let ((process-environment (cons "CLAUDE_CONFIG_DIR=/tmp/cc-config" process-environment)))
+    (should (equal (claude-code-ide-mcp--lockfile-directory)
+                   "/tmp/cc-config/ide/")))
+  ;; Set but empty: treated as unset, must not resolve relative to
+  ;; `default-directory'.
+  (let ((process-environment (cons "CLAUDE_CONFIG_DIR=" process-environment))
+        (default-directory "/some/project/"))
+    (should (equal (claude-code-ide-mcp--lockfile-directory)
+                   (expand-file-name "~/.claude/ide/")))))
+
 (ert-deftest claude-code-ide-test-mcp-server-lifecycle ()
   "Test MCP server start and stop."
   (require 'claude-code-ide-mcp)
