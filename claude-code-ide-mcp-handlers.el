@@ -347,14 +347,11 @@ ARGUMENTS should contain `path' or `tab_name' of the file to close."
                     (when (and (boundp 'ediff-custom-diff-buffer) ediff-custom-diff-buffer)
                       (setf (alist-get 'custom-diff-buffer found-diff-info) ediff-custom-diff-buffer)))
                   (puthash tab-name found-diff-info (claude-code-ide-mcp-session-active-diffs found-session))
-                  ;; Use ediff's proper quit mechanism if available
+                  ;; Use ediff's proper quit mechanism
                   (condition-case err
-                      (if (fboundp 'ediff-really-quit)
-                          ;; Properly quit ediff which will run our quit hooks
-                          (with-current-buffer control-buf
-                            (ediff-really-quit nil))
-                        ;; Fallback: just kill the control buffer
-                        (kill-buffer control-buf))
+                      ;; Properly quit ediff which will run our quit hooks
+                      (with-current-buffer control-buf
+                        (ediff-really-quit nil))
                     (error
                      ;; If ediff-really-quit fails (e.g., side window issues),
                      ;; just kill the control buffer directly
@@ -418,10 +415,7 @@ ARGUMENTS should contain:
     (when (and claude-code-ide-switch-tab-on-ediff
                (claude-code-ide-mcp-session-original-tab session))
       (let ((original-tab (claude-code-ide-mcp-session-original-tab session)))
-        (when (and (fboundp 'tab-bar-mode)
-                   tab-bar-mode
-                   (fboundp 'tab-bar--current-tab)
-                   (fboundp 'tab-bar-select-tab-by-name))
+        (when tab-bar-mode
           (let ((current-tab (tab-bar--current-tab)))
             ;; Compare tab names or indices
             (when (and original-tab current-tab

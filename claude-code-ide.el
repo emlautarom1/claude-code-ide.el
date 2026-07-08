@@ -583,8 +583,7 @@ cursor management, and process buffering for superior user experience."
   (when-let ((proc (get-buffer-process (current-buffer))))
     (set-process-query-on-exit-flag proc nil)
     ;; Try to make vterm read larger chunks at once
-    (when (fboundp 'process-put)
-      (process-put proc 'read-output-max 4096)))
+    (process-put proc 'read-output-max 4096))
   ;; Set up rendering optimization
   (when claude-code-ide-vterm-anti-flicker
     (advice-add 'vterm--filter :around #'claude-code-ide--vterm-smart-renderer))
@@ -612,9 +611,7 @@ cursor management, and process buffering for superior user experience."
     (unless (featurep 'ghostel)
       (require 'ghostel nil t))
     (unless (featurep 'ghostel)
-      (user-error "The package ghostel is not installed.  Please install the ghostel package or change `claude-code-ide-terminal-backend' to `vterm' or `eat'"))
-    (unless (fboundp 'ghostel-exec)
-      (user-error "The installed ghostel package does not provide `ghostel-exec'.  Please update ghostel or change `claude-code-ide-terminal-backend' to `vterm' or `eat'")))
+      (user-error "The package ghostel is not installed.  Please install the ghostel package or change `claude-code-ide-terminal-backend' to `vterm' or `eat'")))
    (t
     (user-error "Invalid terminal backend: %s.  Valid options are 'vterm, 'eat, or 'ghostel" claude-code-ide-terminal-backend))))
 
@@ -635,10 +632,7 @@ cursor management, and process buffering for superior user experience."
     (when eat-terminal
       (eat-term-send-string eat-terminal string)))
    ((eq claude-code-ide-terminal-backend 'ghostel)
-    (if (fboundp 'ghostel-send-string)
-        (ghostel-send-string string)
-      (when-let ((process (get-buffer-process (current-buffer))))
-        (process-send-string process string))))
+    (ghostel-send-string string))
    (t
     (error "Unknown terminal backend: %s" claude-code-ide-terminal-backend))))
 
@@ -680,8 +674,7 @@ from the window where it was initially created."
               (width (window-body-width window)))
           (if (eq claude-code-ide-terminal-backend 'ghostel)
               (progn
-                (when (fboundp 'ghostel--window-adjust-process-window-size)
-                  (ghostel--window-adjust-process-window-size proc (list window)))
+                (ghostel--window-adjust-process-window-size proc (list window))
                 (set-process-window-size proc height width))
             (set-process-window-size proc height width)))))))
 
@@ -788,7 +781,7 @@ Assumes the current buffer is the Claude terminal buffer."
       nil)
      ((eq claude-code-ide-terminal-backend 'eat)
       ;; eat invokes the terminal's ring-bell-function parameter on BEL.
-      (when (and (bound-and-true-p eat-terminal) (fboundp 'eat-term-parameter))
+      (when (bound-and-true-p eat-terminal)
         (eval '(setf (eat-term-parameter eat-terminal 'ring-bell-function)
                      #'claude-code-ide--notify)
               t)))
@@ -1017,8 +1010,7 @@ If the window is not visible, it will be shown in a side window."
         (claude-code-ide--display-buffer-in-side-window existing-buffer)
         ;; Update the original tab when showing the window
         (when-let ((session (claude-code-ide-mcp--get-session-for-project working-dir)))
-          (when (fboundp 'tab-bar--current-tab)
-            (setf (claude-code-ide-mcp-session-original-tab session) (tab-bar--current-tab))))
+          (setf (claude-code-ide-mcp-session-original-tab session) (tab-bar--current-tab)))
         (claude-code-ide-debug "Claude Code window shown")))))
 
 (defun claude-code-ide--build-claude-command (&optional continue resume session-id)

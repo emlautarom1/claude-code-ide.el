@@ -968,8 +968,7 @@ the CLI's SelectionChangedSchema."
                        :project-dir project-dir
                        :deferred (make-hash-table :test 'equal)
                        :active-diffs (make-hash-table :test 'equal)
-                       :original-tab (when (fboundp 'tab-bar--current-tab)
-                                       (tab-bar--current-tab))))
+                       :original-tab (tab-bar--current-tab)))
              (server-and-port (claude-code-ide-mcp--find-free-port))
              (server (car server-and-port))
              (port (cdr server-and-port)))

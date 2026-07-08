@@ -1108,10 +1108,7 @@ have completed before cleanup.  Waits up to 5 seconds."
           (when (and claude-code-ide-switch-tab-on-ediff
                      (claude-code-ide-mcp-session-original-tab session))
             (let ((original-tab (claude-code-ide-mcp-session-original-tab session)))
-              (when (and (fboundp 'tab-bar-mode)
-                         tab-bar-mode
-                         (fboundp 'tab-bar--current-tab)
-                         (fboundp 'tab-bar-select-tab-by-name))
+              (when tab-bar-mode
                 (let ((current-tab (tab-bar--current-tab)))
                   (when (and original-tab current-tab
                              (not (equal (alist-get 'name original-tab)
@@ -1127,10 +1124,7 @@ have completed before cleanup.  Waits up to 5 seconds."
           (when (and claude-code-ide-switch-tab-on-ediff
                      (claude-code-ide-mcp-session-original-tab session))
             (let ((original-tab (claude-code-ide-mcp-session-original-tab session)))
-              (when (and (fboundp 'tab-bar-mode)
-                         tab-bar-mode
-                         (fboundp 'tab-bar--current-tab)
-                         (fboundp 'tab-bar-select-tab-by-name))
+              (when tab-bar-mode
                 (let ((current-tab (tab-bar--current-tab)))
                   (when (and original-tab current-tab
                              (not (equal (alist-get 'name original-tab)
