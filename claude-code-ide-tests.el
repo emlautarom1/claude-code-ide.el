@@ -1049,13 +1049,7 @@ have completed before cleanup.  Waits up to 5 seconds."
          (mock-tab '((name . "test-tab") (index . 1)))
          (tab-bar-mode-enabled nil))
     ;; Mock tab-bar functions
-    (cl-letf (((symbol-function 'fboundp)
-               (lambda (sym)
-                 (or (eq sym 'tab-bar--current-tab)
-                     (eq sym 'tab-bar-select-tab-by-name)
-                     (eq sym 'tab-bar-mode)
-                     (funcall (cl-letf-saved-symbol-function 'fboundp) sym))))
-              ((symbol-function 'tab-bar--current-tab)
+    (cl-letf (((symbol-function 'tab-bar--current-tab)
                (lambda () mock-tab))
               (tab-bar-mode tab-bar-mode-enabled))
       (claude-code-ide-tests--with-temp-config-dir
@@ -1085,13 +1079,7 @@ have completed before cleanup.  Waits up to 5 seconds."
          (tab-bar-mode t))
 
     ;; Mock functions
-    (cl-letf (((symbol-function 'fboundp)
-               (lambda (sym)
-                 (or (eq sym 'tab-bar--current-tab)
-                     (eq sym 'tab-bar-select-tab-by-name)
-                     (eq sym 'tab-bar-mode)
-                     (funcall (cl-letf-saved-symbol-function 'fboundp) sym))))
-              ((symbol-function 'tab-bar--current-tab)
+    (cl-letf (((symbol-function 'tab-bar--current-tab)
                (lambda () current-tab))
               ((symbol-function 'tab-bar-select-tab-by-name)
                (lambda (name)

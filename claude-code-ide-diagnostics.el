@@ -3,7 +3,7 @@
 ;; Copyright (C) 2025
 
 ;; Author: Yoav Orot
-;; Keywords: ai, claude, diagnostics, flycheck
+;; Keywords: ai, claude, diagnostics, flycheck, flymake
 
 ;; This file is not part of GNU Emacs.
 
@@ -23,7 +23,7 @@
 ;;; Commentary:
 
 ;; This file provides diagnostic integration for Claude Code IDE.
-;; It collects diagnostics from Flycheck and converts them to
+;; It collects diagnostics from Flycheck and Flymake and converts them to
 ;; VS Code format for the MCP protocol.
 
 ;;; Code:
