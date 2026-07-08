@@ -17,7 +17,7 @@ This package integrates Claude Code CLI with Emacs via WebSocket and the Model C
 - `claude-code-ide-mcp-server.el` - HTTP-based MCP tools server framework
 - `claude-code-ide-mcp-http-server.el` - HTTP transport implementation
 - `claude-code-ide-emacs-tools.el` - Emacs tools: xref, project info, imenu
-- `claude-code-ide-diagnostics.el` - Flycheck integration
+- `claude-code-ide-diagnostics.el` - Flycheck/Flymake diagnostics integration
 - `claude-code-ide-transient.el` - Transient menu interface
 - `claude-code-ide-debug.el` - Debug logging utilities
 - `claude-code-ide-tests.el` - ERT test suite with mocks

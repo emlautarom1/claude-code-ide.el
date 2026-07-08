@@ -595,5 +595,5 @@ Claude® is a registered trademark of Anthropic, PBC. Claude Code is an applicat
 * Related Projects
 
 - [[https://docs.anthropic.com/en/docs/claude-code][Claude Code CLI]]
-- [[https://github.com/anthropics/claude-code][Claude Code VS Code Extension]]
+- [[https://github.com/anthropics/claude-code][Claude Code (official repository)]]
 - [[https://github.com/coder/claudecode.nvim][claudecode.nvim]] - Neovim integration

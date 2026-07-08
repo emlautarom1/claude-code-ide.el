@@ -3,7 +3,7 @@
 ;; Copyright (C) 2025
 
 ;; Author: Yoav Orot
-;; Version: 0.2.7
+;; Version: 0.3.0
 ;; Package-Requires: ((emacs "28.1") (websocket "1.12") (transient "0.9.0") (web-server "0.1.2"))
 ;; Keywords: ai, claude, code, assistant, mcp, websocket
 ;; URL: https://github.com/manzaltu/claude-code-ide.el
@@ -357,11 +357,6 @@ a more stable viewing experience when working with multiple windows."
   :type 'boolean
   :group 'claude-code-ide)
 
-(define-obsolete-variable-alias
-  'claude-code-ide-eat-initialization-delay
-  'claude-code-ide-terminal-initialization-delay
-  "0.2.6")
-
 ;;; Constants
 
 (defconst claude-code-ide--active-editor-notification-delay 0.1
@@ -588,8 +583,7 @@ cursor management, and process buffering for superior user experience."
   (when-let ((proc (get-buffer-process (current-buffer))))
     (set-process-query-on-exit-flag proc nil)
     ;; Try to make vterm read larger chunks at once
-    (when (fboundp 'process-put)
-      (process-put proc 'read-output-max 4096)))
+    (process-put proc 'read-output-max 4096))
   ;; Set up rendering optimization
   (when claude-code-ide-vterm-anti-flicker
     (advice-add 'vterm--filter :around #'claude-code-ide--vterm-smart-renderer))
@@ -617,9 +611,7 @@ cursor management, and process buffering for superior user experience."
     (unless (featurep 'ghostel)
       (require 'ghostel nil t))
     (unless (featurep 'ghostel)
-      (user-error "The package ghostel is not installed.  Please install the ghostel package or change `claude-code-ide-terminal-backend' to `vterm' or `eat'"))
-    (unless (fboundp 'ghostel-exec)
-      (user-error "The installed ghostel package does not provide `ghostel-exec'.  Please update ghostel or change `claude-code-ide-terminal-backend' to `vterm' or `eat'")))
+      (user-error "The package ghostel is not installed.  Please install the ghostel package or change `claude-code-ide-terminal-backend' to `vterm' or `eat'")))
    (t
     (user-error "Invalid terminal backend: %s.  Valid options are 'vterm, 'eat, or 'ghostel" claude-code-ide-terminal-backend))))
 
@@ -640,10 +632,7 @@ cursor management, and process buffering for superior user experience."
     (when eat-terminal
       (eat-term-send-string eat-terminal string)))
    ((eq claude-code-ide-terminal-backend 'ghostel)
-    (if (fboundp 'ghostel-send-string)
-        (ghostel-send-string string)
-      (when-let ((process (get-buffer-process (current-buffer))))
-        (process-send-string process string))))
+    (ghostel-send-string string))
    (t
     (error "Unknown terminal backend: %s" claude-code-ide-terminal-backend))))
 
@@ -685,6 +674,9 @@ from the window where it was initially created."
               (width (window-body-width window)))
           (if (eq claude-code-ide-terminal-backend 'ghostel)
               (progn
+                ;; Guard this private ghostel helper so that if a ghostel
+                ;; release renames or drops it, resizing degrades to plain
+                ;; `set-process-window-size' instead of erroring.
                 (when (fboundp 'ghostel--window-adjust-process-window-size)
                   (ghostel--window-adjust-process-window-size proc (list window)))
                 (set-process-window-size proc height width))
@@ -793,7 +785,7 @@ Assumes the current buffer is the Claude terminal buffer."
       nil)
      ((eq claude-code-ide-terminal-backend 'eat)
       ;; eat invokes the terminal's ring-bell-function parameter on BEL.
-      (when (and (bound-and-true-p eat-terminal) (fboundp 'eat-term-parameter))
+      (when (bound-and-true-p eat-terminal)
         (eval '(setf (eat-term-parameter eat-terminal 'ring-bell-function)
                      #'claude-code-ide--notify)
               t)))
@@ -1022,8 +1014,7 @@ If the window is not visible, it will be shown in a side window."
         (claude-code-ide--display-buffer-in-side-window existing-buffer)
         ;; Update the original tab when showing the window
         (when-let ((session (claude-code-ide-mcp--get-session-for-project working-dir)))
-          (when (fboundp 'tab-bar--current-tab)
-            (setf (claude-code-ide-mcp-session-original-tab session) (tab-bar--current-tab))))
+          (setf (claude-code-ide-mcp-session-original-tab session) (tab-bar--current-tab)))
         (claude-code-ide-debug "Claude Code window shown")))))
 
 (defun claude-code-ide--build-claude-command (&optional continue resume session-id)
@@ -1582,9 +1573,6 @@ buffer.  The reference is inserted without submitting."
       (user-error "Current buffer is not visiting a file"))
     (claude-code-ide--insert-text ref)
     (claude-code-ide-debug "Inserted reference: %s" ref)))
-
-(define-obsolete-function-alias 'claude-code-ide-insert-at-mentioned
-  'claude-code-ide-insert-region-or-buffer "0.3.0")
 
 ;;;###autoload
 (defun claude-code-ide-yank ()
