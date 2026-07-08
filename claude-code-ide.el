@@ -50,7 +50,10 @@
 ;; M-x claude-code-ide-switch-to-buffer - Switch to project's Claude buffer
 ;; M-x claude-code-ide-list-sessions - List and switch between all sessions
 ;; M-x claude-code-ide-check-status - Check CLI availability and version
-;; M-x claude-code-ide-insert-at-mentioned - Send selected text to Claude
+;; M-x claude-code-ide-insert-region-or-buffer - Insert region/buffer as an @-reference
+;; M-x claude-code-ide-send-prompt - Send a prompt with region/buffer context and submit
+;; M-x claude-code-ide-yank - Paste the kill-ring/clipboard into the session
+;; M-x claude-code-ide-fix-error-at-point - Ask Claude to fix the diagnostic at point
 ;;
 ;; Emacs MCP Tools:
 ;; To enable Emacs tools for Claude, add to your config:
@@ -252,13 +255,6 @@ When non-nil (default), Claude Code can list and read open buffers,
 recent files, and project files via the resources/list and
 resources/read MCP methods.  Set to nil to disable resource sharing."
   :type 'boolean
-  :group 'claude-code-ide)
-
-(defcustom claude-code-ide-large-buffer-threshold 100000
-  "Buffer size in characters above which sending requires confirmation.
-Used by `claude-code-ide-send-region' when no region is active and the
-whole buffer would be sent."
-  :type 'integer
   :group 'claude-code-ide)
 
 (defcustom claude-code-ide-enable-notifications t
@@ -697,23 +693,26 @@ from the window where it was initially created."
 (defun claude-code-ide--setup-terminal-keybindings ()
   "Set up keybindings for the Claude Code terminal buffer.
 This function binds:
-- M-RET (Alt-Return) to insert a newline
-- C-<escape> to send escape"
-  (cond
-   ((eq claude-code-ide-terminal-backend 'vterm)
-    ;; For vterm, we set up local keybindings in vterm-mode-map
-    (local-set-key (kbd "S-<return>") #'claude-code-ide-insert-newline)
-    (local-set-key (kbd "C-<escape>") #'claude-code-ide-send-escape))
-   ((eq claude-code-ide-terminal-backend 'eat)
-    ;; For eat, we need to modify the semi-char mode map which is the default
-    ;; We use local-set-key to make it buffer-local
-    (local-set-key (kbd "S-<return>") #'claude-code-ide-insert-newline)
-    (local-set-key (kbd "C-<escape>") #'claude-code-ide-send-escape))
-   ((eq claude-code-ide-terminal-backend 'ghostel)
-    (local-set-key (kbd "S-<return>") #'claude-code-ide-insert-newline)
-    (local-set-key (kbd "C-<escape>") #'claude-code-ide-send-escape))
-   (t
-    (error "Unknown terminal backend: %s" claude-code-ide-terminal-backend))))
+- S-<return> to insert a newline in the prompt without submitting
+- C-<escape> to send an escape key"
+  (let ((insert-newline
+         (lambda ()
+           "Send Meta-Return (ESC + CR) to insert a newline without submitting."
+           (interactive)
+           (claude-code-ide--terminal-send-string "\e\r")))
+        (send-escape
+         (lambda ()
+           "Send an escape key to the terminal."
+           (interactive)
+           (claude-code-ide--terminal-send-escape))))
+    (cond
+     ((memq claude-code-ide-terminal-backend '(vterm eat ghostel))
+      ;; Bind buffer-locally for all supported backends.  For eat this modifies
+      ;; the semi-char mode map (the default) via `local-set-key'.
+      (local-set-key (kbd "S-<return>") insert-newline)
+      (local-set-key (kbd "C-<escape>") send-escape))
+     (t
+      (error "Unknown terminal backend: %s" claude-code-ide-terminal-backend)))))
 
 ;;; Terminal Reflow Glitch Prevention
 ;;
@@ -1491,9 +1490,6 @@ upgrades it to a `consult'-based one with live preview."
 ;;;###autoload
 ;;; Terminal interaction helpers
 
-(defvar claude-code-ide-command-history nil
-  "History list for commands sent to Claude Code via the minibuffer.")
-
 (defmacro claude-code-ide--with-terminal-buffer (&rest body)
   "Execute BODY in the current project's Claude terminal buffer.
 Signals a `user-error' when there is no session for the project."
@@ -1502,6 +1498,13 @@ Signals a `user-error' when there is no session for the project."
      (if-let ((buffer (get-buffer buffer-name)))
          (with-current-buffer buffer ,@body)
        (user-error "No Claude Code session for this project"))))
+
+(defun claude-code-ide--insert-text (text)
+  "Insert TEXT into the current project's Claude terminal without submitting.
+Returns the Claude buffer on success, signals a `user-error' otherwise."
+  (claude-code-ide--with-terminal-buffer
+   (claude-code-ide--terminal-send-string text)
+   buffer))
 
 (defun claude-code-ide--send-text (text)
   "Send TEXT followed by a return to the current project's Claude terminal.
@@ -1514,15 +1517,39 @@ Returns the Claude buffer on success, signals a `user-error' otherwise."
    buffer))
 
 (defun claude-code-ide--format-file-reference (&optional file-name line-start line-end)
-  "Format a file reference in the @file:line style.
+  "Format a file reference in the @file#line style used by Claude Code.
 FILE-NAME defaults to the current buffer's file.  LINE-START defaults to
 the current line.  LINE-END, when given, formats a line range."
   (let ((file (or file-name (buffer-file-name)))
         (start (or line-start (line-number-at-pos nil t))))
     (when file
       (if line-end
-          (format "@%s:%d-%d" file start line-end)
-        (format "@%s:%d" file start)))))
+          (format "@%s#%d-%d" file start line-end)
+        (format "@%s#%d" file start)))))
+
+(defun claude-code-ide--region-or-buffer-reference ()
+  "Return an @-reference to the active region, or the whole buffer file.
+With an active region, reference its line range (@file#start-end).
+Otherwise reference the whole file (@file).  Return nil when the current
+buffer is not visiting a file."
+  (when-let ((file (buffer-file-name)))
+    ;; Only treat a non-empty region as a selection; an empty active region
+    ;; (point == mark) falls back to the whole-buffer reference.
+    (if (and (use-region-p) (> (region-end) (region-beginning)))
+        (let* ((beg (region-beginning))
+               (end (region-end))
+               ;; When the region ends at the beginning of a line, that line
+               ;; is not actually selected; reference up to the previous one.
+               (end (if (= end (save-excursion
+                                 (goto-char end)
+                                 (line-beginning-position)))
+                        (1- end)
+                      end)))
+          (claude-code-ide--format-file-reference
+           file
+           (line-number-at-pos beg t)
+           (line-number-at-pos end t)))
+      (format "@%s" file))))
 
 (defun claude-code-ide--format-errors-at-point ()
   "Return a string describing diagnostics at point.
@@ -1544,38 +1571,31 @@ and other systems).  Returns nil when no diagnostics are found."
     (substring-no-properties (help-at-pt-kbd-string)))
    (t nil)))
 
-(defun claude-code-ide-insert-at-mentioned ()
-  "Insert selected text into Claude prompt."
+;;;###autoload
+(defun claude-code-ide-insert-region-or-buffer ()
+  "Insert an @-reference to the region or buffer into the Claude prompt.
+With an active region, reference its lines; otherwise reference the whole
+buffer.  The reference is inserted without submitting."
   (interactive)
-  (if-let* ((project-dir (claude-code-ide-mcp--get-buffer-project))
-            (session (claude-code-ide-mcp--get-session-for-project project-dir))
-            (client (claude-code-ide-mcp-session-client session)))
-      (progn
-        (claude-code-ide-mcp-send-at-mentioned)
-        (claude-code-ide-debug "Sent selection to Claude Code"))
-    (user-error "Claude Code is not connected.  Please start Claude Code first")))
+  (let ((ref (claude-code-ide--region-or-buffer-reference)))
+    (unless ref
+      (user-error "Current buffer is not visiting a file"))
+    (claude-code-ide--insert-text ref)
+    (claude-code-ide-debug "Inserted reference: %s" ref)))
+
+(define-obsolete-function-alias 'claude-code-ide-insert-at-mentioned
+  'claude-code-ide-insert-region-or-buffer "0.3.0")
 
 ;;;###autoload
-(defun claude-code-ide-send-escape ()
-  "Send escape key to the Claude Code terminal buffer for the current project."
+(defun claude-code-ide-yank ()
+  "Paste the latest kill (kill-ring/clipboard) into the Claude terminal.
+Analogous to focusing the Claude session and pressing \\[yank]; the text
+is inserted without submitting."
   (interactive)
-  (let ((buffer-name (claude-code-ide--get-buffer-name)))
-    (if-let ((buffer (get-buffer buffer-name)))
-        (with-current-buffer buffer
-          (claude-code-ide--terminal-send-escape))
-      (user-error "No Claude Code session for this project"))))
-
-;;;###autoload
-(defun claude-code-ide-insert-newline ()
-  "Send a newline to the Claude Code terminal buffer for the current project.
-This sends Meta-Return (ESC + CR), which Claude Code interprets as a
-newline in the prompt."
-  (interactive)
-  (let ((buffer-name (claude-code-ide--get-buffer-name)))
-    (if-let ((buffer (get-buffer buffer-name)))
-        (with-current-buffer buffer
-          (claude-code-ide--terminal-send-string "\e\r"))
-      (user-error "No Claude Code session for this project"))))
+  (let ((text (ignore-errors (current-kill 0))))
+    (unless text
+      (user-error "Kill ring is empty"))
+    (claude-code-ide--insert-text (substring-no-properties text))))
 
 ;;;###autoload
 (defun claude-code-ide-toggle-vterm-optimization ()
@@ -1592,67 +1612,20 @@ Use this to balance between visual smoothness and raw responsiveness."
 
 ;;;###autoload
 (defun claude-code-ide-send-prompt (&optional prompt)
-  "Send a prompt to the Claude Code terminal.
-When called interactively, reads a prompt from the minibuffer.
-When called programmatically, sends the given PROMPT string."
+  "Send a prompt to Claude Code with the region or buffer as context.
+When called interactively, read PROMPT from the minibuffer.  If a region
+is active it is referenced; otherwise the whole buffer file is
+referenced.  The reference, when available, is prepended to PROMPT and
+the whole thing is submitted."
   (interactive)
   (let ((prompt-to-send (or prompt (read-string "Claude prompt: "))))
     (unless (string-empty-p prompt-to-send)
-      (claude-code-ide--send-text prompt-to-send)
-      (claude-code-ide-debug "Sent prompt to Claude Code: %s" prompt-to-send))))
-
-;;;###autoload
-(defun claude-code-ide-send-region (&optional arg)
-  "Send the active region to Claude Code.
-If no region is active, send the whole buffer, asking for confirmation
-when it exceeds `claude-code-ide-large-buffer-threshold'.  With prefix
-ARG, prompt for instructions to prepend to the text."
-  (interactive "P")
-  (let ((text (if (use-region-p)
-                  (buffer-substring-no-properties (region-beginning) (region-end))
-                (if (and (> (buffer-size) claude-code-ide-large-buffer-threshold)
-                         (not (yes-or-no-p "Buffer is large.  Send anyway? ")))
-                    nil
-                  (buffer-substring-no-properties (point-min) (point-max))))))
-    ;; Only prompt for instructions and send when there is text to send;
-    ;; declining the large-buffer prompt leaves TEXT nil and aborts cleanly.
-    (when text
-      (let* ((instructions (when arg (read-string "Instructions for Claude: ")))
-             (full-text (if (and instructions (not (string-empty-p instructions)))
-                            (format "%s\n\n%s" instructions text)
-                          text)))
-        (claude-code-ide--send-text full-text)))))
-
-;;;###autoload
-(defun claude-code-ide-send-buffer-file ()
-  "Send a reference to the current buffer's file to Claude Code."
-  (interactive)
-  (let ((ref (claude-code-ide--format-file-reference)))
-    (unless ref
-      (user-error "Current buffer is not visiting a file"))
-    (claude-code-ide--send-text ref)))
-
-;;;###autoload
-(defun claude-code-ide-send-file (file)
-  "Send a reference to FILE to Claude Code.
-Interactively, prompt for the file."
-  (interactive "fSend file to Claude: ")
-  (claude-code-ide--send-text (format "@%s" (expand-file-name file))))
-
-;;;###autoload
-(defun claude-code-ide-send-with-context ()
-  "Read a command and send it with the current file and line as context.
-If a region is active, include its line range."
-  (interactive)
-  (let* ((cmd (read-string "Claude command: " nil 'claude-code-ide-command-history))
-         (file-ref (if (use-region-p)
-                       (claude-code-ide--format-file-reference
-                        nil
-                        (line-number-at-pos (region-beginning) t)
-                        (line-number-at-pos (region-end) t))
-                     (claude-code-ide--format-file-reference)))
-         (full (if file-ref (format "%s\n%s" cmd file-ref) cmd)))
-    (claude-code-ide--send-text full)))
+      (let* ((ref (claude-code-ide--region-or-buffer-reference))
+             (text (if ref
+                       (format "%s\n\n%s" ref prompt-to-send)
+                     prompt-to-send)))
+        (claude-code-ide--send-text text)
+        (claude-code-ide-debug "Sent prompt to Claude Code: %s" text)))))
 
 ;;;###autoload
 (defun claude-code-ide-fix-error-at-point ()
@@ -1666,15 +1639,6 @@ Supports Flycheck, Flymake, and any system implementing `help-at-pt'."
       (claude-code-ide--send-text
        (format "Fix this error at %s. Do not run any external linter; just fix the error at point using the context provided in the error message: <%s>"
                (or file-ref "the current position") error-text)))))
-
-;;;###autoload
-(defun claude-code-ide-fork ()
-  "Send escape-escape to Claude Code to jump to a previous message."
-  (interactive)
-  (claude-code-ide--with-terminal-buffer
-   (claude-code-ide--terminal-send-escape)
-   (sit-for 0.05)
-   (claude-code-ide--terminal-send-escape)))
 
 ;;;###autoload
 (defun claude-code-ide-toggle ()

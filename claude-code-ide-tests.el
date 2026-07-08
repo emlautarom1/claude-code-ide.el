@@ -539,6 +539,23 @@ have completed before cleanup.  Waits up to 5 seconds."
       ;; Test with non-existent buffer (should error)
       (should-error (claude-code-ide-send-prompt) :type 'user-error)
 
+      ;; Region + file -> the @-reference is prepended to the prompt
+      (setq sent-string nil sent-return nil)
+      (with-temp-buffer
+        (rename-buffer "*test-claude-buffer*")
+        (insert "line1\nline2\nline3")
+        (setq buffer-file-name "/tmp/prompt.el")
+        (goto-char (point-min))
+        (set-mark (point))
+        (goto-char (line-end-position 2))
+        (let ((transient-mark-mode t))
+          (activate-mark)
+          (claude-code-ide-send-prompt))
+        (set-buffer-modified-p nil)
+        (should (equal sent-string
+                       (concat "@/tmp/prompt.el#1-2\n\n" test-prompt)))
+        (should sent-return))
+
       ;; Test with empty prompt (should not send anything)
       (setq sent-string nil sent-return nil)
       (cl-letf (((symbol-function 'read-string)
@@ -548,25 +565,6 @@ have completed before cleanup.  Waits up to 5 seconds."
           (claude-code-ide-send-prompt)
           (should (null sent-string))
           (should (null sent-return)))))))
-
-(ert-deftest claude-code-ide-test-insert-newline-command ()
-  "Test the claude-code-ide-insert-newline command."
-  (let ((sent-string nil))
-    (cl-letf (((symbol-function 'claude-code-ide--get-buffer-name)
-               (lambda () "*test-claude-buffer*"))
-              ((symbol-function 'claude-code-ide--terminal-send-string)
-               (lambda (str) (setq sent-string str))))
-
-      ;; With an existing session buffer, send Meta-Return (ESC + CR).
-      (with-temp-buffer
-        (rename-buffer "*test-claude-buffer*")
-        (claude-code-ide-insert-newline)
-        (should (equal sent-string "\e\r")))
-
-      ;; With no session buffer, signal a user error and send nothing.
-      (setq sent-string nil)
-      (should-error (claude-code-ide-insert-newline) :type 'user-error)
-      (should (null sent-string)))))
 
 (ert-deftest claude-code-ide-test-terminal-session-creation ()
   "Test terminal session creation with both backends."
@@ -2599,18 +2597,65 @@ have completed before cleanup.  Waits up to 5 seconds."
 ;;; Tests for Terminal UX Commands (Phase 2 port)
 
 (ert-deftest claude-code-ide-test-format-file-reference ()
-  "Test @file:line reference formatting."
+  "Test @file#line reference formatting."
   (with-temp-buffer
     (insert "a\nb\nc\n")
     (goto-char (point-min))
     (setq buffer-file-name "/tmp/foo.el")
-    (should (equal (claude-code-ide--format-file-reference) "@/tmp/foo.el:1"))
-    (should (equal (claude-code-ide--format-file-reference nil 2 5) "@/tmp/foo.el:2-5"))
-    (should (equal (claude-code-ide--format-file-reference "/x/y.el" 3) "@/x/y.el:3"))
+    (should (equal (claude-code-ide--format-file-reference) "@/tmp/foo.el#1"))
+    (should (equal (claude-code-ide--format-file-reference nil 2 5) "@/tmp/foo.el#2-5"))
+    (should (equal (claude-code-ide--format-file-reference "/x/y.el" 3) "@/x/y.el#3"))
     (set-buffer-modified-p nil))
   ;; No file -> nil
   (with-temp-buffer
     (should-not (claude-code-ide--format-file-reference))))
+
+(ert-deftest claude-code-ide-test-region-or-buffer-reference ()
+  "Test the region-or-buffer DWIM reference."
+  ;; Active region -> @file#start-end
+  (with-temp-buffer
+    (insert "Hello\nWorld\nAgain")
+    (setq buffer-file-name "/tmp/dwim.el")
+    (goto-char (point-min))
+    (set-mark (point))
+    (goto-char (line-end-position 2))
+    (let ((transient-mark-mode t))
+      (activate-mark)
+      (should (equal (claude-code-ide--region-or-buffer-reference)
+                     "@/tmp/dwim.el#1-2")))
+    (set-buffer-modified-p nil))
+  ;; Region ending at the beginning of a line -> that line is not selected
+  (with-temp-buffer
+    (insert "Hello\nWorld\nAgain")
+    (setq buffer-file-name "/tmp/dwim.el")
+    (goto-char (point-min))
+    (set-mark (point))
+    (goto-char (line-beginning-position 3))
+    (let ((transient-mark-mode t))
+      (activate-mark)
+      (should (equal (claude-code-ide--region-or-buffer-reference)
+                     "@/tmp/dwim.el#1-2")))
+    (set-buffer-modified-p nil))
+  ;; No region -> whole buffer @file
+  (with-temp-buffer
+    (insert "x")
+    (setq buffer-file-name "/tmp/dwim.el")
+    (should (equal (claude-code-ide--region-or-buffer-reference) "@/tmp/dwim.el"))
+    (set-buffer-modified-p nil))
+  ;; Empty active region (point == mark) -> treated as no region
+  (with-temp-buffer
+    (insert "Hello\nWorld")
+    (setq buffer-file-name "/tmp/dwim.el")
+    (goto-char (point-min))
+    (set-mark (point))
+    (let ((transient-mark-mode t)
+          (use-empty-active-region t))
+      (activate-mark)
+      (should (equal (claude-code-ide--region-or-buffer-reference) "@/tmp/dwim.el")))
+    (set-buffer-modified-p nil))
+  ;; No file -> nil
+  (with-temp-buffer
+    (should-not (claude-code-ide--region-or-buffer-reference))))
 
 (ert-deftest claude-code-ide-test-format-errors-at-point ()
   "Test diagnostic extraction at point via help-at-pt fallback."
@@ -2618,82 +2663,6 @@ have completed before cleanup.  Waits up to 5 seconds."
     (should-not (claude-code-ide--format-errors-at-point)))
   (cl-letf (((symbol-function 'help-at-pt-kbd-string) (lambda () "boom error")))
     (should (equal (claude-code-ide--format-errors-at-point) "boom error"))))
-
-(ert-deftest claude-code-ide-test-send-region ()
-  "Test send-region builds the correct text."
-  (let ((sent nil))
-    (cl-letf (((symbol-function 'claude-code-ide--send-text)
-               (lambda (text) (setq sent text) nil)))
-      ;; With an active region
-      (with-temp-buffer
-        (insert "Hello\nWorld")
-        (goto-char (point-min))
-        (set-mark (point))
-        (goto-char (point-max))
-        (let ((transient-mark-mode t))
-          (activate-mark)
-          (claude-code-ide-send-region))
-        (should (equal sent "Hello\nWorld")))
-      ;; No region -> whole buffer
-      (setq sent nil)
-      (with-temp-buffer
-        (insert "Whole buffer")
-        (claude-code-ide-send-region)
-        (should (equal sent "Whole buffer"))))
-    ;; Declining a large buffer must not prompt for instructions or send.
-    (let ((sent nil)
-          (instructions-prompted nil))
-      (cl-letf (((symbol-function 'claude-code-ide--send-text)
-                 (lambda (text) (setq sent text) nil))
-                ((symbol-function 'yes-or-no-p) (lambda (&rest _) nil))
-                ((symbol-function 'read-string)
-                 (lambda (&rest _) (setq instructions-prompted t) "instr")))
-        (let ((claude-code-ide-large-buffer-threshold 1))
-          (with-temp-buffer
-            (insert "This is a large buffer")
-            ;; With prefix ARG, instructions would normally be requested.
-            (claude-code-ide-send-region t)
-            (should (null sent))
-            (should (null instructions-prompted))))))))
-
-(ert-deftest claude-code-ide-test-send-with-context ()
-  "Test send-with-context appends an @file:line reference."
-  (let ((sent nil))
-    (cl-letf (((symbol-function 'claude-code-ide--send-text)
-               (lambda (text) (setq sent text) nil))
-              ((symbol-function 'read-string) (lambda (&rest _) "do something")))
-      (with-temp-buffer
-        (insert "a\nb\nc")
-        (goto-char (point-min))
-        (setq buffer-file-name "/tmp/ctx.el")
-        (claude-code-ide-send-with-context)
-        (set-buffer-modified-p nil)
-        (should (string-prefix-p "do something" sent))
-        (should (string-match-p "@/tmp/ctx.el:1" sent))))))
-
-(ert-deftest claude-code-ide-test-send-buffer-file ()
-  "Test send-buffer-file sends the buffer's file reference."
-  (let ((sent nil))
-    (cl-letf (((symbol-function 'claude-code-ide--send-text)
-               (lambda (text) (setq sent text) nil)))
-      (with-temp-buffer
-        (insert "x")
-        (goto-char (point-min))
-        (setq buffer-file-name "/tmp/bf.el")
-        (claude-code-ide-send-buffer-file)
-        (set-buffer-modified-p nil)
-        (should (equal sent "@/tmp/bf.el:1")))
-      ;; No file -> user-error
-      (with-temp-buffer
-        (should-error (claude-code-ide-send-buffer-file) :type 'user-error)))))
-
-(ert-deftest claude-code-ide-test-send-file ()
-  "Test send-file injects an @path reference."
-  (let ((sent nil))
-    (cl-letf (((symbol-function 'claude-code-ide--send-text)
-               (lambda (text) (setq sent text) nil)))
-      (claude-code-ide-send-file "/tmp/some/file.txt")
-      (should (equal sent "@/tmp/some/file.txt")))))
 
 (ert-deftest claude-code-ide-test-fix-error-at-point ()
   "Test fix-error-at-point only sends when a diagnostic is present."
@@ -2716,19 +2685,78 @@ have completed before cleanup.  Waits up to 5 seconds."
           (set-buffer-modified-p nil)
           (should (string-match-p "undefined var x" sent)))))))
 
-(ert-deftest claude-code-ide-test-fork ()
-  "Test fork sends escape twice to the terminal."
-  (let ((escapes 0)
+(ert-deftest claude-code-ide-test-insert-text ()
+  "Test the --insert-text primitive inserts without submitting."
+  (let ((sent-string nil)
+        (sent-return nil)
         (bufname "*claude-test-term*"))
     (get-buffer-create bufname)
     (unwind-protect
         (cl-letf (((symbol-function 'claude-code-ide--get-buffer-name)
                    (lambda (&rest _) bufname))
-                  ((symbol-function 'claude-code-ide--terminal-send-escape)
-                   (lambda () (cl-incf escapes))))
-          (claude-code-ide-fork)
-          (should (= escapes 2)))
+                  ((symbol-function 'claude-code-ide--terminal-send-string)
+                   (lambda (str) (setq sent-string str)))
+                  ((symbol-function 'claude-code-ide--terminal-send-return)
+                   (lambda () (setq sent-return t))))
+          (claude-code-ide--insert-text "hello")
+          (should (equal sent-string "hello"))
+          (should-not sent-return))
+      (kill-buffer bufname))
+    ;; No session -> user-error
+    (should-error (claude-code-ide--insert-text "x") :type 'user-error)))
+
+(ert-deftest claude-code-ide-test-insert-region-or-buffer ()
+  "Test insert-region-or-buffer inserts a reference without submitting."
+  (let ((sent-string nil)
+        (sent-return nil)
+        (bufname "*claude-test-term*"))
+    (get-buffer-create bufname)
+    (unwind-protect
+        (cl-letf (((symbol-function 'claude-code-ide--get-buffer-name)
+                   (lambda (&rest _) bufname))
+                  ((symbol-function 'claude-code-ide--terminal-send-string)
+                   (lambda (str) (setq sent-string str)))
+                  ((symbol-function 'claude-code-ide--terminal-send-return)
+                   (lambda () (setq sent-return t))))
+          ;; No region -> whole buffer reference, no submit
+          (with-temp-buffer
+            (insert "x")
+            (setq buffer-file-name "/tmp/ins.el")
+            (claude-code-ide-insert-region-or-buffer)
+            (set-buffer-modified-p nil))
+          (should (equal sent-string "@/tmp/ins.el"))
+          (should-not sent-return)
+          ;; Non-file buffer -> user-error
+          (with-temp-buffer
+            (should-error (claude-code-ide-insert-region-or-buffer)
+                          :type 'user-error)))
       (kill-buffer bufname))))
+
+(ert-deftest claude-code-ide-test-yank ()
+  "Test yank pastes the current kill without submitting."
+  (let ((sent-string nil)
+        (sent-return nil)
+        (bufname "*claude-test-term*"))
+    (get-buffer-create bufname)
+    (unwind-protect
+        (cl-letf (((symbol-function 'claude-code-ide--get-buffer-name)
+                   (lambda (&rest _) bufname))
+                  ((symbol-function 'current-kill)
+                   (lambda (&rest _) "yanked text"))
+                  ((symbol-function 'claude-code-ide--terminal-send-string)
+                   (lambda (str) (setq sent-string str)))
+                  ((symbol-function 'claude-code-ide--terminal-send-return)
+                   (lambda () (setq sent-return t))))
+          (claude-code-ide-yank)
+          (should (equal sent-string "yanked text"))
+          (should-not sent-return))
+      (kill-buffer bufname))
+    ;; Empty kill ring -> user-error, nothing sent
+    (setq sent-string nil)
+    (cl-letf (((symbol-function 'current-kill)
+               (lambda (&rest _) (error "Kill ring is empty"))))
+      (should-error (claude-code-ide-yank) :type 'user-error)
+      (should (null sent-string)))))
 
 ;;; Tests for Completion Notifications (Phase 3 port)
 
