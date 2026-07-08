@@ -243,9 +243,8 @@ PARAMS is the parameters alist."
 
 (defun claude-code-ide-mcp-http-server--tool-to-mcp (tool-spec)
   "Convert TOOL-SPEC to MCP tool format.
-TOOL-SPEC should already be normalized."
-  (let* ((name (or (plist-get tool-spec :name)
-                   (symbol-name (plist-get tool-spec :function))))
+TOOL-SPEC is a `claude-code-ide-make-tool' plist."
+  (let* ((name (plist-get tool-spec :name))
          (description (plist-get tool-spec :description))
          (args (plist-get tool-spec :args)))
     `((name . ,name)
@@ -276,7 +275,7 @@ TOOL-SPEC should already be normalized."
   "Extract required argument names from ARGS."
   (let ((required '()))
     (dolist (arg args)
-      ;; In new format, args are required unless marked :optional t
+      ;; Args are required unless marked :optional t
       (unless (plist-get arg :optional)
         (push (plist-get arg :name) required)))
     ;; Return as a vector (JSON array) to ensure proper encoding
@@ -288,7 +287,7 @@ Returns a list of arguments in the correct order."
   (let ((result '()))
     (dolist (spec arg-specs (nreverse result))
       (let* ((name (plist-get spec :name))
-             ;; In new format, args are required unless marked :optional t
+             ;; Args are required unless marked :optional t
              (optional (plist-get spec :optional))
              (value (alist-get (intern name) args)))
         (when (and (not optional) (not value))

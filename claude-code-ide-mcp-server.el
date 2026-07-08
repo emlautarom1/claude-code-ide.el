@@ -64,17 +64,23 @@ If nil, a random available port will be selected automatically."
   :group 'claude-code-ide-mcp-server)
 
 (defcustom claude-code-ide-mcp-server-tools nil
-  "Alist of Emacs functions to expose via MCP tools server.
-Each entry is (FUNCTION . PLIST) where PLIST contains:
-  :description - Human-readable description of the function
-  :parameters - List of parameter specifications, each with:
-    :name - Parameter name
-    :type - Parameter type (string, number, boolean)
-    :required - Whether parameter is required
-    :description - Parameter description"
-  :type '(alist :key-type symbol
-                :value-type (plist :key-type keyword
-                                   :value-type sexp))
+  "List of Emacs functions to expose via the MCP tools server.
+Each entry is a plist as produced by `claude-code-ide-make-tool', with:
+  :function - The function (symbol or lambda) that runs the tool
+  :name - The tool name (string, recommended snake_case)
+  :description - Human-readable description of the tool
+  :args - List of argument specifications, each a plist with:
+    :name - Argument name (string)
+    :type - Argument type (symbol: string, number, integer, boolean,
+            array, object, null)
+    :description - Argument description (string)
+    :optional - Whether the argument is optional (boolean, default nil)
+    :enum - For enumerated types, a vector of allowed values
+    :items - For array types, a plist describing the array items
+    :properties - For object types, a plist of property specifications
+  :category - Optional category string
+Prefer `claude-code-ide-make-tool' to build and register entries."
+  :type '(repeat (plist :key-type keyword :value-type sexp))
   :group 'claude-code-ide-mcp-server)
 
 ;;; State Management
