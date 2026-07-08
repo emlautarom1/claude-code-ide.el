@@ -202,9 +202,7 @@ PARAMS is the parameters alist."
 
 (defun claude-code-ide-mcp-http-server--handle-tools-list (_params)
   "Handle the tools/list method."
-  (let ((tools (mapcar (lambda (spec)
-                         (claude-code-ide-mcp-http-server--tool-to-mcp
-                          (claude-code-ide--normalize-tool-spec spec)))
+  (let ((tools (mapcar #'claude-code-ide-mcp-http-server--tool-to-mcp
                        claude-code-ide-mcp-server-tools)))
     (claude-code-ide-debug "MCP server returning %d tools" (length tools))
     (dolist (tool tools)
@@ -215,22 +213,18 @@ PARAMS is the parameters alist."
   "Handle the tools/call method with PARAMS."
   (let* ((tool-name (alist-get 'name params))
          (tool-args (alist-get 'arguments params))
-         ;; Find the tool spec by name, handling both formats
+         ;; Find the tool spec by name
          (tool-spec (cl-find-if
                      (lambda (spec)
-                       (let ((normalized (claude-code-ide--normalize-tool-spec spec)))
-                         (string= (or (plist-get normalized :name)
-                                      (symbol-name (plist-get normalized :function)))
-                                  tool-name)))
+                       (string= (plist-get spec :name) tool-name))
                      claude-code-ide-mcp-server-tools)))
 
     (unless tool-spec
       (signal 'json-rpc-error (list -32602 (format "Unknown tool: %s" tool-name))))
 
-    ;; Normalize the tool spec and extract function and args
-    (let* ((normalized (claude-code-ide--normalize-tool-spec tool-spec))
-           (tool-function (plist-get normalized :function))
-           (arg-specs (plist-get normalized :args))
+    ;; Extract function and args from the tool spec
+    (let* ((tool-function (plist-get tool-spec :function))
+           (arg-specs (plist-get tool-spec :args))
            (args (claude-code-ide-mcp-http-server--validate-args tool-args arg-specs)))
 
       ;; Call the function
