@@ -693,8 +693,8 @@ from the window where it was initially created."
 (defun claude-code-ide--setup-terminal-keybindings ()
   "Set up keybindings for the Claude Code terminal buffer.
 This function binds:
-- M-RET (Alt-Return) to insert a newline
-- C-<escape> to send escape"
+- S-<return> to insert a newline in the prompt without submitting
+- C-<escape> to send an escape key"
   (let ((insert-newline
          (lambda ()
            "Send Meta-Return (ESC + CR) to insert a newline without submitting."
