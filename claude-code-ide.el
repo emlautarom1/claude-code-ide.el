@@ -1533,15 +1533,16 @@ With an active region, reference its line range (@file#start-end).
 Otherwise reference the whole file (@file).  Return nil when the current
 buffer is not visiting a file."
   (when-let ((file (buffer-file-name)))
-    (if (use-region-p)
+    ;; Only treat a non-empty region as a selection; an empty active region
+    ;; (point == mark) falls back to the whole-buffer reference.
+    (if (and (use-region-p) (> (region-end) (region-beginning)))
         (let* ((beg (region-beginning))
                (end (region-end))
                ;; When the region ends at the beginning of a line, that line
                ;; is not actually selected; reference up to the previous one.
-               (end (if (and (> end beg)
-                             (= end (save-excursion
-                                      (goto-char end)
-                                      (line-beginning-position))))
+               (end (if (= end (save-excursion
+                                 (goto-char end)
+                                 (line-beginning-position)))
                         (1- end)
                       end)))
           (claude-code-ide--format-file-reference

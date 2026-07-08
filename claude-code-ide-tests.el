@@ -2642,6 +2642,17 @@ have completed before cleanup.  Waits up to 5 seconds."
     (setq buffer-file-name "/tmp/dwim.el")
     (should (equal (claude-code-ide--region-or-buffer-reference) "@/tmp/dwim.el"))
     (set-buffer-modified-p nil))
+  ;; Empty active region (point == mark) -> treated as no region
+  (with-temp-buffer
+    (insert "Hello\nWorld")
+    (setq buffer-file-name "/tmp/dwim.el")
+    (goto-char (point-min))
+    (set-mark (point))
+    (let ((transient-mark-mode t)
+          (use-empty-active-region t))
+      (activate-mark)
+      (should (equal (claude-code-ide--region-or-buffer-reference) "@/tmp/dwim.el")))
+    (set-buffer-modified-p nil))
   ;; No file -> nil
   (with-temp-buffer
     (should-not (claude-code-ide--region-or-buffer-reference))))
