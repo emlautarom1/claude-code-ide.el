@@ -1050,23 +1050,6 @@ the CLI's SelectionChangedSchema."
               (claude-code-ide-mcp-stop-session dir))
           (claude-code-ide-debug "No MCP servers running"))))))
 
-(defun claude-code-ide-mcp-send-at-mentioned ()
-  "Send at-mentioned notification.
-If a region is selected, send the selected lines.
-Otherwise, send the current line."
-  (let* ((file-path (or (buffer-file-name) ""))
-         (start-line (if (use-region-p)
-                         (1- (line-number-at-pos (region-beginning)))
-                       (1- (line-number-at-pos (point)))))
-         (end-line (if (use-region-p)
-                       (1- (line-number-at-pos (region-end)))
-                     (1- (line-number-at-pos (point))))))
-    (claude-code-ide-mcp--send-notification
-     "at_mentioned"
-     `((filePath . ,file-path)
-       (lineStart . ,start-line)
-       (lineEnd . ,end-line)))))
-
 (defun claude-code-ide-mcp-complete-deferred (session tool-name result &optional unique-key)
   "Complete a deferred response for SESSION and TOOL-NAME with RESULT.
 SESSION is the MCP session that owns the deferred response.
