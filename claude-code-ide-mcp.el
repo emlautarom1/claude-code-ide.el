@@ -170,8 +170,6 @@ Returns the session if found, nil otherwise."
              claude-code-ide-mcp--sessions)
     sessions))
 
-;;; Backward Compatibility Layer
-
 ;;; Lockfile Management
 
 (defun claude-code-ide-mcp--lockfile-directory ()
@@ -1043,7 +1041,7 @@ the CLI's SelectionChangedSchema."
 
     (if project-dir
         (claude-code-ide-mcp-stop-session project-dir)
-      ;; No specific project - stop all sessions (backward compatibility)
+      ;; No specific project - stop all sessions
       (let ((sessions (hash-table-keys claude-code-ide-mcp--sessions)))
         (if sessions
             (dolist (dir sessions)
