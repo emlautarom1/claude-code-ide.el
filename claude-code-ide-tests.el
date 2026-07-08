@@ -2624,6 +2624,18 @@ have completed before cleanup.  Waits up to 5 seconds."
       (should (equal (claude-code-ide--region-or-buffer-reference)
                      "@/tmp/dwim.el#1-2")))
     (set-buffer-modified-p nil))
+  ;; Region ending at the beginning of a line -> that line is not selected
+  (with-temp-buffer
+    (insert "Hello\nWorld\nAgain")
+    (setq buffer-file-name "/tmp/dwim.el")
+    (goto-char (point-min))
+    (set-mark (point))
+    (goto-char (line-beginning-position 3))
+    (let ((transient-mark-mode t))
+      (activate-mark)
+      (should (equal (claude-code-ide--region-or-buffer-reference)
+                     "@/tmp/dwim.el#1-2")))
+    (set-buffer-modified-p nil))
   ;; No region -> whole buffer @file
   (with-temp-buffer
     (insert "x")
@@ -2727,7 +2739,13 @@ have completed before cleanup.  Waits up to 5 seconds."
           (claude-code-ide-yank)
           (should (equal sent-string "yanked text"))
           (should-not sent-return))
-      (kill-buffer bufname))))
+      (kill-buffer bufname))
+    ;; Empty kill ring -> user-error, nothing sent
+    (setq sent-string nil)
+    (cl-letf (((symbol-function 'current-kill)
+               (lambda (&rest _) (error "Kill ring is empty"))))
+      (should-error (claude-code-ide-yank) :type 'user-error)
+      (should (null sent-string)))))
 
 ;;; Tests for Completion Notifications (Phase 3 port)
 

@@ -1534,10 +1534,20 @@ Otherwise reference the whole file (@file).  Return nil when the current
 buffer is not visiting a file."
   (when-let ((file (buffer-file-name)))
     (if (use-region-p)
-        (claude-code-ide--format-file-reference
-         file
-         (line-number-at-pos (region-beginning) t)
-         (line-number-at-pos (region-end) t))
+        (let* ((beg (region-beginning))
+               (end (region-end))
+               ;; When the region ends at the beginning of a line, that line
+               ;; is not actually selected; reference up to the previous one.
+               (end (if (and (> end beg)
+                             (= end (save-excursion
+                                      (goto-char end)
+                                      (line-beginning-position))))
+                        (1- end)
+                      end)))
+          (claude-code-ide--format-file-reference
+           file
+           (line-number-at-pos beg t)
+           (line-number-at-pos end t)))
       (format "@%s" file))))
 
 (defun claude-code-ide--format-errors-at-point ()
@@ -1581,7 +1591,10 @@ buffer.  The reference is inserted without submitting."
 Analogous to focusing the Claude session and pressing \\[yank]; the text
 is inserted without submitting."
   (interactive)
-  (claude-code-ide--insert-text (substring-no-properties (current-kill 0))))
+  (let ((text (ignore-errors (current-kill 0))))
+    (unless text
+      (user-error "Kill ring is empty"))
+    (claude-code-ide--insert-text (substring-no-properties text))))
 
 ;;;###autoload
 (defun claude-code-ide-toggle-vterm-optimization ()
