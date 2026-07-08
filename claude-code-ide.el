@@ -674,7 +674,11 @@ from the window where it was initially created."
               (width (window-body-width window)))
           (if (eq claude-code-ide-terminal-backend 'ghostel)
               (progn
-                (ghostel--window-adjust-process-window-size proc (list window))
+                ;; Guard this private ghostel helper so that if a ghostel
+                ;; release renames or drops it, resizing degrades to plain
+                ;; `set-process-window-size' instead of erroring.
+                (when (fboundp 'ghostel--window-adjust-process-window-size)
+                  (ghostel--window-adjust-process-window-size proc (list window)))
                 (set-process-window-size proc height width))
             (set-process-window-size proc height width)))))))
 
