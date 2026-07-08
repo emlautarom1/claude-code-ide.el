@@ -803,19 +803,6 @@ have completed before cleanup.  Waits up to 5 seconds."
       ;; Restore original value
       (setq claude-code-ide-terminal-initialization-delay original-delay))))
 
-(ert-deftest claude-code-ide-test-obsolete-eat-delay-alias ()
-  "Test that the obsolete eat delay alias still works."
-  ;; The alias should be defined
-  (should (boundp 'claude-code-ide-eat-initialization-delay))
-  ;; Setting the old variable should affect the new one
-  (let ((original-delay claude-code-ide-terminal-initialization-delay))
-    (unwind-protect
-        (progn
-          (setq claude-code-ide-eat-initialization-delay 0.3)
-          (should (= claude-code-ide-terminal-initialization-delay 0.3)))
-      ;; Restore original value
-      (setq claude-code-ide-terminal-initialization-delay original-delay))))
-
 (ert-deftest claude-code-ide-test-stop-no-session ()
   "Test stop command when no session is running."
   (claude-code-ide-tests--clear-processes)

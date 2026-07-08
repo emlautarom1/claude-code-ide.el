@@ -357,11 +357,6 @@ a more stable viewing experience when working with multiple windows."
   :type 'boolean
   :group 'claude-code-ide)
 
-(define-obsolete-variable-alias
-  'claude-code-ide-eat-initialization-delay
-  'claude-code-ide-terminal-initialization-delay
-  "0.2.6")
-
 ;;; Constants
 
 (defconst claude-code-ide--active-editor-notification-delay 0.1
@@ -1582,9 +1577,6 @@ buffer.  The reference is inserted without submitting."
       (user-error "Current buffer is not visiting a file"))
     (claude-code-ide--insert-text ref)
     (claude-code-ide-debug "Inserted reference: %s" ref)))
-
-(define-obsolete-function-alias 'claude-code-ide-insert-at-mentioned
-  'claude-code-ide-insert-region-or-buffer "0.3.0")
 
 ;;;###autoload
 (defun claude-code-ide-yank ()
