@@ -130,32 +130,26 @@ After saving the above, run: =doom sync= in the terminal.
 
 The easiest way to interact with Claude Code IDE is through the transient menu interface, which provides visual access to all available commands. Simply run =M-x claude-code-ide-menu= to open the interactive menu.
 
-| Command                                 | Description                                       |
-|-----------------------------------------+---------------------------------------------------|
-| =M-x claude-code-ide-menu=                | Open transient menu with all Claude Code commands |
-| =M-x claude-code-ide-emacs-tools-setup=   | Set up built-in MCP tools (e.g. xref, project)    |
-| =M-x claude-code-ide=                     | Start Claude Code for the current project         |
-| =M-x claude-code-ide-send-prompt=         | Send prompt to Claude from minibuffer input       |
-| =M-x claude-code-ide-continue=            | Continue most recent conversation in directory    |
-| =M-x claude-code-ide-resume=              | Resume Claude Code with previous conversation     |
-| =M-x claude-code-ide-stop=                | Stop Claude Code for the current project          |
-| =M-x claude-code-ide-switch-to-buffer=    | Switch to project's Claude buffer                 |
-| =M-x claude-code-ide-list-sessions=       | List sessions (ordered by status) and switch      |
-| =M-x claude-code-ide-check-status=        | Check if Claude Code CLI is installed and working |
-| =M-x claude-code-ide-insert-at-mentioned= | Send selected text to Claude prompt               |
-| =M-x claude-code-ide-send-region=         | Send the region (or whole buffer) to Claude       |
-| =M-x claude-code-ide-send-with-context=   | Send a command with current file/line context     |
-| =M-x claude-code-ide-send-buffer-file=    | Send the current buffer's file as @reference      |
-| =M-x claude-code-ide-send-file=           | Send a chosen file as an @reference               |
-| =M-x claude-code-ide-fix-error-at-point=  | Ask Claude to fix the diagnostic at point         |
-| =M-x claude-code-ide-fork=                | Jump to a previous message (sends Escape-Escape)  |
-| =M-x claude-code-ide-send-escape=         | Send escape key to Claude terminal                |
-| =M-x claude-code-ide-insert-newline=      | Insert newline in Claude prompt (sends M-RET)     |
-| =M-x claude-code-ide-toggle=              | Toggle visibility of Claude Code window           |
-| =M-x claude-code-ide-toggle-recent=       | Toggle most recent Claude window globally         |
-| =M-x claude-code-ide-show-debug=          | Show the debug buffer with WebSocket messages     |
-| =M-x claude-code-ide-clear-debug=         | Clear the debug buffer                            |
-| =M-x claude-code-ide-toggle-debug=        | Toggle debug logging of WebSocket/JSON-RPC        |
+| Command                                       | Description                                                  |
+|-----------------------------------------------+--------------------------------------------------------------|
+| =M-x claude-code-ide-menu=                    | Open transient menu with all Claude Code commands            |
+| =M-x claude-code-ide-emacs-tools-setup=       | Set up built-in MCP tools (e.g. xref, project)               |
+| =M-x claude-code-ide=                         | Start Claude Code for the current project                    |
+| =M-x claude-code-ide-send-prompt=             | Send a prompt with the region/buffer as context, then submit |
+| =M-x claude-code-ide-continue=                | Continue most recent conversation in directory               |
+| =M-x claude-code-ide-resume=                  | Resume Claude Code with previous conversation                |
+| =M-x claude-code-ide-stop=                    | Stop Claude Code for the current project                     |
+| =M-x claude-code-ide-switch-to-buffer=        | Switch to project's Claude buffer                            |
+| =M-x claude-code-ide-list-sessions=           | List sessions (ordered by status) and switch                 |
+| =M-x claude-code-ide-check-status=            | Check if Claude Code CLI is installed and working            |
+| =M-x claude-code-ide-insert-region-or-buffer= | Insert the region or buffer as an @-reference (no submit)    |
+| =M-x claude-code-ide-yank=                    | Paste the kill-ring/clipboard into the session (no submit)   |
+| =M-x claude-code-ide-fix-error-at-point=      | Ask Claude to fix the diagnostic at point                    |
+| =M-x claude-code-ide-toggle=                  | Toggle visibility of Claude Code window                      |
+| =M-x claude-code-ide-toggle-recent=           | Toggle most recent Claude window globally                    |
+| =M-x claude-code-ide-show-debug=              | Show the debug buffer with WebSocket messages                |
+| =M-x claude-code-ide-clear-debug=             | Clear the debug buffer                                       |
+| =M-x claude-code-ide-toggle-debug=            | Toggle debug logging of WebSocket/JSON-RPC                   |
 
 ** Multi-Project Support
 
@@ -192,40 +186,40 @@ This allows you to refine Claude's suggestions before they're applied, ensuring 
 
 *** Configuration Variables
 
-| Variable                                      | Description                                 | Default                              |
-|-----------------------------------------------+---------------------------------------------+--------------------------------------|
-| ~claude-code-ide-cli-path~                      | Path to Claude Code CLI                     | ~"claude"~                             |
-| ~claude-code-ide-buffer-name-function~          | Function for buffer naming                  | ~claude-code-ide--default-buffer-name~ |
-| ~claude-code-ide-cli-debug~                     | Enable CLI debug mode (-d flag)             | ~nil~                                  |
-| ~claude-code-ide-cli-extra-flags~               | Additional CLI flags (e.g. "--model")       | ~""~                                   |
-| ~claude-code-ide-debug~                         | Enable debug logging                        | ~nil~                                  |
-| ~claude-code-ide-terminal-backend~              | Terminal backend (vterm/eat/ghostel)        | ~'vterm~                               |
-| ~claude-code-ide-vterm-anti-flicker~            | Enable vterm flicker reduction              | ~t~                                    |
-| ~claude-code-ide-vterm-render-delay~            | vterm render batching delay (seconds)       | ~0.005~                                |
-| ~claude-code-ide-terminal-initialization-delay~ | Initialization delay for terminals          | ~0.1~                                  |
-| ~claude-code-ide-log-with-context~              | Include session context in log messages     | ~t~                                    |
-| ~claude-code-ide-debug-buffer~                  | Buffer name for debug output                | ~"*claude-code-ide-debug*"~              |
-| ~claude-code-ide-use-side-window~               | Use side window vs regular buffer           | ~t~                                    |
-| ~claude-code-ide-window-side~                   | Side for Claude window                      | ~'right~                               |
-| ~claude-code-ide-window-width~                  | Body width for side windows (left/right)    | ~100~                                  |
-| ~claude-code-ide-window-height~                 | Height for side windows (top/bottom)        | ~20~                                   |
-| ~claude-code-ide-focus-on-open~                 | Focus Claude window when opened             | ~t~                                    |
-| ~claude-code-ide-focus-claude-after-ediff~      | Focus Claude window after opening ediff     | ~t~                                    |
-| ~claude-code-ide-show-claude-window-in-ediff~   | Show Claude window during ediff             | ~t~                                    |
-| ~claude-code-ide-use-ide-diff~                  | Use IDE diff viewer instead of terminal     | ~t~                                    |
-| ~claude-code-ide-switch-tab-on-ediff~           | Switch to Claude's tab when opening ediff   | ~t~                                    |
-| ~claude-code-ide-system-prompt~                 | Custom system prompt to append              | ~nil~                                  |
-| ~claude-code-ide-enable-mcp-server~             | Enable MCP tools server                     | ~nil~                                  |
-| ~claude-code-ide-mcp-server-port~               | Port for MCP tools server                   | ~nil~ (auto-select)                    |
-| ~claude-code-ide-mcp-server-tools~              | Alist of exposed Emacs functions            | ~nil~                                  |
-| ~claude-code-ide-diagnostics-backend~           | Diagnostics backend (auto/flycheck/flymake) | ~'auto~                                |
-| ~claude-code-ide-no-flicker~                    | Enable flicker-free terminal renderer       | ~nil~                                  |
-| ~claude-code-ide-prevent-reflow-glitch~         | Prevent terminal reflow glitch (bug #1422)  | ~t~                                    |
-| ~claude-code-ide-enable-execute-code~           | Allow model to evaluate Elisp in Emacs      | ~t~                                    |
-| ~claude-code-ide-enable-resources~              | Expose files to Claude as MCP resources     | ~t~                                    |
-| ~claude-code-ide-large-buffer-threshold~        | Confirm before sending a buffer this large  | ~100000~                               |
-| ~claude-code-ide-enable-notifications~          | Notify when Claude finishes and awaits input | ~t~                                   |
-| ~claude-code-ide-notification-function~         | Function called to notify the user          | ~claude-code-ide-default-notification~ |
+| Variable                                        | Description                                  | Default                                |
+|-------------------------------------------------+----------------------------------------------+----------------------------------------|
+| ~claude-code-ide-cli-path~                      | Path to Claude Code CLI                      | ~"claude"~                             |
+| ~claude-code-ide-buffer-name-function~          | Function for buffer naming                   | ~claude-code-ide--default-buffer-name~ |
+| ~claude-code-ide-cli-debug~                     | Enable CLI debug mode (-d flag)              | ~nil~                                  |
+| ~claude-code-ide-cli-extra-flags~               | Additional CLI flags (e.g. "--model")        | ~""~                                   |
+| ~claude-code-ide-debug~                         | Enable debug logging                         | ~nil~                                  |
+| ~claude-code-ide-terminal-backend~              | Terminal backend (vterm/eat/ghostel)         | ~'vterm~                               |
+| ~claude-code-ide-vterm-anti-flicker~            | Enable vterm flicker reduction               | ~t~                                    |
+| ~claude-code-ide-vterm-render-delay~            | vterm render batching delay (seconds)        | ~0.005~                                |
+| ~claude-code-ide-terminal-initialization-delay~ | Initialization delay for terminals           | ~0.1~                                  |
+| ~claude-code-ide-log-with-context~              | Include session context in log messages      | ~t~                                    |
+| ~claude-code-ide-debug-buffer~                  | Buffer name for debug output                 | ~"*claude-code-ide-debug*"~            |
+| ~claude-code-ide-use-side-window~               | Use side window vs regular buffer            | ~t~                                    |
+| ~claude-code-ide-window-side~                   | Side for Claude window                       | ~'right~                               |
+| ~claude-code-ide-window-width~                  | Body width for side windows (left/right)     | ~100~                                  |
+| ~claude-code-ide-window-height~                 | Height for side windows (top/bottom)         | ~20~                                   |
+| ~claude-code-ide-focus-on-open~                 | Focus Claude window when opened              | ~t~                                    |
+| ~claude-code-ide-focus-claude-after-ediff~      | Focus Claude window after opening ediff      | ~t~                                    |
+| ~claude-code-ide-show-claude-window-in-ediff~   | Show Claude window during ediff              | ~t~                                    |
+| ~claude-code-ide-use-ide-diff~                  | Use IDE diff viewer instead of terminal      | ~t~                                    |
+| ~claude-code-ide-switch-tab-on-ediff~           | Switch to Claude's tab when opening ediff    | ~t~                                    |
+| ~claude-code-ide-system-prompt~                 | Custom system prompt to append               | ~nil~                                  |
+| ~claude-code-ide-enable-mcp-server~             | Enable MCP tools server                      | ~nil~                                  |
+| ~claude-code-ide-mcp-server-port~               | Port for MCP tools server                    | ~nil~ (auto-select)                    |
+| ~claude-code-ide-mcp-server-tools~              | Alist of exposed Emacs functions             | ~nil~                                  |
+| ~claude-code-ide-diagnostics-backend~           | Diagnostics backend (auto/flycheck/flymake)  | ~'auto~                                |
+| ~claude-code-ide-no-flicker~                    | Enable flicker-free terminal renderer        | ~nil~                                  |
+| ~claude-code-ide-prevent-reflow-glitch~         | Prevent terminal reflow glitch (bug #1422)   | ~t~                                    |
+| ~claude-code-ide-enable-execute-code~           | Allow model to evaluate Elisp in Emacs       | ~t~                                    |
+| ~claude-code-ide-enable-resources~              | Expose files to Claude as MCP resources      | ~t~                                    |
+| ~claude-code-ide-large-buffer-threshold~        | Confirm before sending a buffer this large   | ~100000~                               |
+| ~claude-code-ide-enable-notifications~          | Notify when Claude finishes and awaits input | ~t~                                    |
+| ~claude-code-ide-notification-function~         | Function called to notify the user           | ~claude-code-ide-default-notification~ |
 
 *** Side Window Configuration
 
@@ -325,10 +319,10 @@ This delay prevents display artifacts such as misaligned prompts and incorrect c
 
 Claude Code IDE adds custom keybindings to the terminal for easier interaction:
 
-| Keybinding | Command                        | Description                          |
-|------------+--------------------------------+--------------------------------------|
-| =M-RET=      | =claude-code-ide-insert-newline= | Insert a newline in the prompt       |
-| =C-<escape>= | =claude-code-ide-send-escape=    | Send escape key to cancel operations |
+| Keybinding   | Description                                         |
+|--------------+-----------------------------------------------------|
+| =S-<return>= | Insert a newline in the prompt (without submitting) |
+| =C-<escape>= | Send an escape key to cancel the current operation  |
 
 These keybindings are automatically set up for =vterm=, =eat=, and =ghostel= backends and only apply within Claude Code terminal buffers.
 
