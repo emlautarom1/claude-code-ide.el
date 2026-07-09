@@ -1215,8 +1215,12 @@ have completed before cleanup.  Waits up to 5 seconds."
                                                      (should-not (assq 'isEmpty selection))
                                                      (let ((start (alist-get 'start selection))
                                                            (end (alist-get 'end selection)))
-                                                       (should (= (alist-get 'line start) 1))  ; 1-based
-                                                       (should (= (alist-get 'line end) 3)))))))  ; 1-based
+                                                       ;; Positions are zero-based (line and character),
+                                                       ;; following the IDE protocol (VS Code / LSP).
+                                                       (should (= (alist-get 'line start) 0))
+                                                       (should (= (alist-get 'character start) 0))
+                                                       (should (= (alist-get 'line end) 2))
+                                                       (should (= (alist-get 'character end) 0)))))))
 
   ;; Test without selection
   (claude-code-ide-mcp-tests--with-temp-buffer "Test"
@@ -1229,6 +1233,34 @@ have completed before cleanup.  Waits up to 5 seconds."
                                                    ;; Should not contain isEmpty or fileUrl
                                                    (should-not (assq 'isEmpty selection))
                                                    (should-not (assq 'fileUrl result))))))
+
+(ert-deftest claude-code-ide-test-mcp-selection-matches-reference ()
+  "Selection payload and @-mention describe the same physical region.
+The payload reports zero-based positions (VS Code / LSP), while the
+@-mention reports one-based inclusive lines; both must cover the same
+lines for a mid-line selection."
+  (with-temp-buffer
+    (insert "alpha\nbeta\ngamma")
+    (setq buffer-file-name "/tmp/consistency.el")
+    ;; Select from column 2 of line 1 to column 2 of line 3 (mid-line to mid-line).
+    (goto-char 3)
+    (set-mark (point))
+    (goto-char 14)
+    (let ((transient-mark-mode t))
+      (activate-mark)
+      ;; Zero-based selection payload.
+      (let* ((result (claude-code-ide-mcp--get-current-selection))
+             (selection (alist-get 'selection result))
+             (start (alist-get 'start selection))
+             (end (alist-get 'end selection)))
+        (should (= (alist-get 'line start) 0))
+        (should (= (alist-get 'character start) 2))
+        (should (= (alist-get 'line end) 2))
+        (should (= (alist-get 'character end) 2)))
+      ;; One-based inclusive @-mention over the same physical region.
+      (should (equal (claude-code-ide--region-or-buffer-reference)
+                     "@/tmp/consistency.el#1-3")))
+    (set-buffer-modified-p nil)))
 
 (ert-deftest claude-code-ide-test-mcp-close-tab ()
   "Test the close_tab tool implementation."
@@ -1734,6 +1766,53 @@ have completed before cleanup.  Waits up to 5 seconds."
       (let ((diags (claude-code-ide-diagnostics-get-all (current-buffer))))
         ;; Should use flycheck when flycheck-mode is active
         (should (vectorp diags))))))
+
+(ert-deftest claude-code-ide-test-diagnostics-flycheck-zero-based ()
+  "Flycheck diagnostics use 0-based line and character (VS Code / LSP)."
+  (require 'claude-code-ide-diagnostics)
+  (let ((flycheck-mode t)
+        (flycheck-current-errors
+         (list (make-flycheck-error :line 5 :column 3
+                                    :end-line 5 :end-column 8
+                                    :level 'warning :checker 'emacs-lisp
+                                    :message "test warning")))
+        (claude-code-ide-diagnostics-backend 'flycheck))
+    (with-temp-buffer
+      (let* ((diags (claude-code-ide-diagnostics-get-all (current-buffer)))
+             (range (alist-get 'range (aref diags 0)))
+             (start (alist-get 'start range))
+             (end (alist-get 'end range)))
+        (should (= (length diags) 1))
+        ;; 1-based flycheck line 5 / column 3 -> 0-based line 4 / character 2.
+        (should (= (alist-get 'line start) 4))
+        (should (= (alist-get 'character start) 2))
+        ;; 1-based end column 8 -> 0-based character 7.
+        (should (= (alist-get 'line end) 4))
+        (should (= (alist-get 'character end) 7))))))
+
+(ert-deftest claude-code-ide-test-diagnostics-flymake-zero-based ()
+  "Flymake diagnostics use 0-based line and character (VS Code / LSP)."
+  (require 'claude-code-ide-diagnostics)
+  ;; Use a real flymake diagnostic: its accessors are inlined into the
+  ;; byte-compiled diagnostics code, so stubbing them via `cl-letf' would
+  ;; not take effect.  Only `flymake-diagnostics' (a plain defun) is stubbed.
+  (skip-unless (fboundp 'flymake-make-diagnostic))
+  (with-temp-buffer
+    (insert "alpha\nbeta\ngamma")
+    ;; beg = column 2 of line 1; end = column 2 of line 2.
+    (let ((diag (flymake-make-diagnostic (current-buffer) 3 9 :warning "test")))
+      (cl-letf (((symbol-function 'flymake-diagnostics) (lambda (&rest _) (list diag))))
+        (setq-local flymake-mode t)
+        (let* ((claude-code-ide-diagnostics-backend 'flymake)
+               (diags (claude-code-ide-diagnostics-get-all (current-buffer)))
+               (range (alist-get 'range (aref diags 0)))
+               (start (alist-get 'start range))
+               (end (alist-get 'end range)))
+          (should (= (length diags) 1))
+          (should (= (alist-get 'line start) 0))
+          (should (= (alist-get 'character start) 2))
+          (should (= (alist-get 'line end) 1))
+          (should (= (alist-get 'character end) 2)))))))
 
 ;; Disabled due to ERT macro interaction with transient-mark-mode in batch mode
 ;; The handler works correctly (verified with direct testing) but the test fails

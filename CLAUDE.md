@@ -22,6 +22,26 @@ This package integrates Claude Code CLI with Emacs via WebSocket and the Model C
 - `claude-code-ide-debug.el` - Debug logging utilities
 - `claude-code-ide-tests.el` - ERT test suite with mocks
 
+## Coordinate Conventions
+
+The Claude Code IDE protocol uses **different coordinate bases per surface** —
+match the protocol, do not invent a uniform convention:
+
+- **`selection_changed` / `getCurrentSelection` / `getLatestSelection`**: positions
+  are **0-based** for both `line` and `character` (LSP / VS Code `Selection`
+  semantics). Built via `claude-code-ide-mcp--point->lsp-position`. The range is a
+  faithful mirror of the region, so a whole-line selection ends at the start of the
+  following line; the CLI renders it back to human 1-based lines.
+- **`getDiagnostics`**: `range.start`/`range.end` positions are **0-based** for both
+  `line` and `character` (VS Code / LSP `Diagnostic` range). Flycheck reports
+  1-based lines and columns, so both are decremented; Flymake's `current-column`
+  is already 0-based while its `line-number-at-pos` line is decremented.
+- **`openFile` `startLine`/`endLine`** and the **`@file#L-L` mention** produced by
+  `claude-code-ide--region-or-buffer-reference`: **1-based, inclusive** lines.
+
+When touching selection/position code, keep the outbound selection and diagnostics
+payloads 0-based and leave the `@`-mention / `openFile` paths 1-based.
+
 ## Hooks
 
 This project uses Claude Code hooks to automatically maintain code quality. The hooks are configured in `.claude/settings.json` and include:

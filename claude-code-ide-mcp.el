@@ -834,38 +834,38 @@ This should be called when the buffer's context might have changed."
                                     (with-current-buffer current-buffer
                                       (claude-code-ide-mcp--send-selection-for-project project-dir)))))))))))
 
+(defun claude-code-ide-mcp--point->lsp-position (pos)
+  "Return the position at POS as an alist ((line . L) (character . C)).
+Both LINE and CHARACTER are zero-based, matching the IDE selection
+protocol (VS Code / LSP), where the first character of a file is at line
+0, character 0.  LINE is absolute so it is unaffected by narrowing."
+  (save-excursion
+    (goto-char pos)
+    `((line . ,(1- (line-number-at-pos pos t)))
+      (character . ,(current-column)))))
+
 (defun claude-code-ide-mcp--get-current-selection ()
   "Build the current selection payload for the selection_changed notification.
 Returns an alist with `text', `filePath', and `selection' keys matching
-the CLI's SelectionChangedSchema."
+the CLI's SelectionChangedSchema.  Selection positions are zero-based for
+both line and character, following the IDE protocol (VS Code / LSP); the
+range faithfully mirrors the region, so a whole-line selection ends at
+the start of the following line."
   (let ((file-path (or (buffer-file-name) "")))
     (if (use-region-p)
         (let* ((start (region-beginning))
                (end (region-end))
-               (text (buffer-substring-no-properties start end))
-               (start-line (line-number-at-pos start))
-               (end-line (line-number-at-pos end))
-               (start-col (save-excursion
-                            (goto-char start)
-                            (1+ (current-column))))
-               (end-col (save-excursion
-                          (goto-char end)
-                          (1+ (current-column)))))
+               (text (buffer-substring-no-properties start end)))
           `((text . ,text)
             (filePath . ,file-path)
-            (selection . ((start . ((line . ,start-line)
-                                    (character . ,start-col)))
-                          (end . ((line . ,end-line)
-                                  (character . ,end-col)))))))
+            (selection . ((start . ,(claude-code-ide-mcp--point->lsp-position start))
+                          (end . ,(claude-code-ide-mcp--point->lsp-position end))))))
       ;; No selection - return cursor position
-      (let* ((cursor-line (line-number-at-pos))
-             (cursor-col (1+ (current-column))))
+      (let ((position (claude-code-ide-mcp--point->lsp-position (point))))
         `((text . "")
           (filePath . ,file-path)
-          (selection . ((start . ((line . ,cursor-line)
-                                  (character . ,cursor-col)))
-                        (end . ((line . ,cursor-line)
-                                (character . ,cursor-col))))))))))
+          (selection . ((start . ,position)
+                        (end . ,position))))))))
 
 (defun claude-code-ide-mcp--send-selection-for-project (project-dir)
   "Send current selection to Claude for PROJECT-DIR."
