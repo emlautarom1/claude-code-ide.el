@@ -1036,7 +1036,7 @@ Additional flags from `claude-code-ide-cli-extra-flags' are also included."
       ;; Append user's custom prompt if set
       (when claude-code-ide-system-prompt
         (setq emacs-prompt (concat emacs-prompt "\n\n" claude-code-ide-system-prompt)))
-      ;; Add the combined prompt to the command
+      ;; Add the assembled prompt to the command
       (setq claude-cmd (concat claude-cmd " --append-system-prompt "
                                (shell-quote-argument emacs-prompt))))
     ;; Add any extra flags
