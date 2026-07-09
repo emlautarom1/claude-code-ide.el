@@ -2904,6 +2904,8 @@ real command, then restore the mock for the remaining tests."
 
 (ert-deftest claude-code-ide-test-session-marginalia-annotation ()
   "The marginalia annotation carries the align marker and the session columns."
+  ;; The annotator reuses `marginalia--truncate', so `marginalia' must be present.
+  (skip-unless (require 'marginalia nil t))
   (require 'claude-code-ide-marginalia)
   (clrhash claude-code-ide--sessions)
   (let ((dir "/tmp/ccide-annot-test/")
@@ -2940,6 +2942,7 @@ real command, then restore the mock for the remaining tests."
 
 (ert-deftest claude-code-ide-test-annotation-column ()
   "`claude-code-ide-marginalia--column' pads, truncates and faces a column."
+  (skip-unless (require 'marginalia nil t))
   (require 'claude-code-ide-marginalia)
   ;; Short text is padded with spaces to the exact width, left-justified.
   (let ((col (claude-code-ide-marginalia--column "ab" 6 'marginalia-date)))
@@ -2947,10 +2950,12 @@ real command, then restore the mock for the remaining tests."
     (should (string-prefix-p "ab" col))
     ;; The face is applied across the whole padded column.
     (should (eq (get-text-property 0 'face col) 'marginalia-date)))
-  ;; Overlong text is truncated to the width and ends with an ellipsis.
+  ;; Overlong text is truncated to the width, keeping the full text as a
+  ;; `help-echo' (the ellipsis glyph itself depends on the display, so we do not
+  ;; assert on it).
   (let ((col (claude-code-ide-marginalia--column "abcdefghij" 5 'marginalia-documentation)))
     (should (= (string-width col) 5))
-    (should (string-suffix-p "…" col)))
+    (should (equal (get-text-property 0 'help-echo col) "abcdefghij")))
   ;; A negative width right-justifies: padding goes on the left.
   (let ((col (claude-code-ide-marginalia--column "ab" -6 'marginalia-date)))
     (should (= (string-width col) 6))
@@ -2959,6 +2964,7 @@ real command, then restore the mock for the remaining tests."
 
 (ert-deftest claude-code-ide-test-session-marginalia-annotation-columns-align ()
   "A long name is truncated so the later columns keep their fixed offset."
+  (skip-unless (require 'marginalia nil t))
   (require 'claude-code-ide-marginalia)
   (clrhash claude-code-ide--sessions)
   (let ((short-dir "/tmp/ccide-annot-short/")
@@ -2974,9 +2980,10 @@ real command, then restore the mock for the remaining tests."
                             (abbreviate-file-name short-dir)))
                 (long-ann (claude-code-ide-marginalia--annotate-session
                            (abbreviate-file-name long-dir))))
-            ;; The long name is ellipsis-truncated.
-            (should (string-match-p "…" long-ann))
-            (should-not (string-match-p "…" short-ann))
+            ;; The long name is truncated: its tail is dropped while the short
+            ;; name survives in full.
+            (should (string-match-p "short" short-ann))
+            (should-not (string-match-p "column-width" long-ann))
             ;; Because the name column has a fixed width, the age and status
             ;; columns begin at the same offset regardless of name length.
             (should (= (string-match "2m" short-ann)

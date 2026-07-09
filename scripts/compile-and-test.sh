@@ -78,6 +78,12 @@ if VTERM_DIR=$(find_emacs_package "emacs-libvterm"); then
     LOAD_PATH="$LOAD_PATH -L $VTERM_DIR"
 fi
 
+# `marginalia' powers the session-picker annotations; its tests skip when it is
+# absent, so put it on the load path whenever it is installed.
+if MARGINALIA_DIR=$(find_emacs_package "marginalia"); then
+    LOAD_PATH="$LOAD_PATH -L $MARGINALIA_DIR"
+fi
+
 # STEP 1: Compile all elisp files
 echo "=== Running byte-compilation check ===" >&2
 emacs -batch $LOAD_PATH \

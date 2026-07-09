@@ -42,24 +42,23 @@
 
 (require 'claude-code-ide)
 
-;; `marginalia' is optional and referenced only inside the `with-eval-after-load'
-;; block below; declare its variable so byte compilation stays clean when it is
-;; not installed.
+;; `marginalia' is guaranteed loaded whenever this file is (it is required from
+;; a `with-eval-after-load 'marginalia' hook), so its symbols are used directly
+;; at runtime.  They are declared here so byte-compilation stays clean when
+;; `marginalia' is absent from the compile-time load path.
 (defvar marginalia-annotators)
+(defvar marginalia-separator)
+(declare-function marginalia--truncate "marginalia" (str width))
 
 (defun claude-code-ide-marginalia--column (text width face)
-  "Render TEXT as a fixed-WIDTH column, then propertize it with FACE.
-TEXT is truncated with an ellipsis when it is too wide and padded with spaces
-when too narrow.  A positive WIDTH left-justifies, a negative WIDTH
-right-justifies.  This mirrors how `marginalia' lays out its own fixed-width
-columns (its `:width' field option), so the session picker's columns line up
-regardless of how long each entry is."
-  (let* ((w (abs width))
-         (col (if (< width 0)
-                  (let ((s (truncate-string-to-width text w 0 nil "…")))
-                    (concat (make-string (max 0 (- w (string-width s))) ?\s) s))
-                (truncate-string-to-width text w 0 ?\s "…"))))
-    (propertize col 'face face)))
+  "Return TEXT as a fixed-WIDTH column propertized with FACE.
+Delegates the layout to `marginalia--truncate', so it behaves exactly like
+`marginalia's own `:width' columns: TEXT is padded with spaces or truncated
+with the configured ellipsis (and given a `help-echo' with the full text) to
+`abs WIDTH' columns, a positive WIDTH left-justifying and a negative WIDTH
+right-justifying.  This keeps the session picker's columns aligned the way
+every other `marginalia' annotation is."
+  (propertize (marginalia--truncate text width) 'face face))
 
 (defun claude-code-ide-marginalia--annotate-session (directory)
   "Marginalia annotation for session DIRECTORY: name, age, status and reason.
@@ -79,10 +78,10 @@ from `claude-code-ide--run-status-faces'."
          (status-face (or (cdr (assoc status claude-code-ide--run-status-faces)) 'shadow)))
     (concat (propertize " " 'marginalia--align t)
             (claude-code-ide-marginalia--column name 24 'marginalia-documentation)
-            "  " (claude-code-ide-marginalia--column age -4 'marginalia-date)
-            "  " (claude-code-ide-marginalia--column status 8 status-face)
+            marginalia-separator (claude-code-ide-marginalia--column age -4 'marginalia-date)
+            marginalia-separator (claude-code-ide-marginalia--column status 8 status-face)
             (when (and reason (not (string-empty-p reason)))
-              (concat "  " (propertize reason 'face status-face))))))
+              (concat marginalia-separator (propertize reason 'face status-face))))))
 
 ;; Register the annotator for the `claude-session' completion category -- it is
 ;; the only source of session annotations, so no opt-in is offered.  This is
