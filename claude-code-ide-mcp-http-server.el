@@ -203,7 +203,9 @@ PARAMS is the parameters alist."
 (defun claude-code-ide-mcp-http-server--handle-tools-list (_params)
   "Handle the tools/list method."
   (let ((tools (mapcar #'claude-code-ide-mcp-http-server--tool-to-mcp
-                       claude-code-ide-mcp-server-tools)))
+                       (cl-remove-if-not
+                        #'claude-code-ide-mcp-server--tool-enabled-p
+                        claude-code-ide-mcp-server-tools))))
     (claude-code-ide-debug "MCP server returning %d tools" (length tools))
     (dolist (tool tools)
       (claude-code-ide-debug "  Tool: %s" (alist-get 'name tool)))
@@ -219,7 +221,8 @@ PARAMS is the parameters alist."
                        (string= (plist-get spec :name) tool-name))
                      claude-code-ide-mcp-server-tools)))
 
-    (unless tool-spec
+    (unless (and tool-spec
+                 (claude-code-ide-mcp-server--tool-enabled-p tool-spec))
       (signal 'json-rpc-error (list -32602 (format "Unknown tool: %s" tool-name))))
 
     ;; Extract function and args from the tool spec
