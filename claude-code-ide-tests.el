@@ -1215,8 +1215,12 @@ have completed before cleanup.  Waits up to 5 seconds."
                                                      (should-not (assq 'isEmpty selection))
                                                      (let ((start (alist-get 'start selection))
                                                            (end (alist-get 'end selection)))
-                                                       (should (= (alist-get 'line start) 1))  ; 1-based
-                                                       (should (= (alist-get 'line end) 3)))))))  ; 1-based
+                                                       ;; Positions are zero-based (line and character),
+                                                       ;; following the IDE protocol (VS Code / LSP).
+                                                       (should (= (alist-get 'line start) 0))
+                                                       (should (= (alist-get 'character start) 0))
+                                                       (should (= (alist-get 'line end) 2))
+                                                       (should (= (alist-get 'character end) 0)))))))
 
   ;; Test without selection
   (claude-code-ide-mcp-tests--with-temp-buffer "Test"
@@ -1229,6 +1233,34 @@ have completed before cleanup.  Waits up to 5 seconds."
                                                    ;; Should not contain isEmpty or fileUrl
                                                    (should-not (assq 'isEmpty selection))
                                                    (should-not (assq 'fileUrl result))))))
+
+(ert-deftest claude-code-ide-test-mcp-selection-matches-reference ()
+  "Selection payload and @-mention describe the same physical region.
+The payload reports zero-based positions (VS Code / LSP), while the
+@-mention reports one-based inclusive lines; both must cover the same
+lines for a mid-line selection."
+  (with-temp-buffer
+    (insert "alpha\nbeta\ngamma")
+    (setq buffer-file-name "/tmp/consistency.el")
+    ;; Select from column 2 of line 1 to column 2 of line 3 (mid-line to mid-line).
+    (goto-char 3)
+    (set-mark (point))
+    (goto-char 14)
+    (let ((transient-mark-mode t))
+      (activate-mark)
+      ;; Zero-based selection payload.
+      (let* ((result (claude-code-ide-mcp--get-current-selection))
+             (selection (alist-get 'selection result))
+             (start (alist-get 'start selection))
+             (end (alist-get 'end selection)))
+        (should (= (alist-get 'line start) 0))
+        (should (= (alist-get 'character start) 2))
+        (should (= (alist-get 'line end) 2))
+        (should (= (alist-get 'character end) 2)))
+      ;; One-based inclusive @-mention over the same physical region.
+      (should (equal (claude-code-ide--region-or-buffer-reference)
+                     "@/tmp/consistency.el#1-3")))
+    (set-buffer-modified-p nil)))
 
 (ert-deftest claude-code-ide-test-mcp-close-tab ()
   "Test the close_tab tool implementation."
