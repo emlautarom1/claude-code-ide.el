@@ -433,9 +433,10 @@ Returns an empty string when SINCE is nil."
 
 ;; The Claude Code CLI writes one JSON file per running session under
 ;; `<config>/sessions/<pid>.json', recording that session's `cwd', `status'
-;; (waiting/idle/busy), `statusUpdatedAt', `name', and -- when waiting -- a
-;; `waitingFor' reason.  We watch that directory and mirror the ground truth
-;; onto our own session structs, rather than reconstructing it from CLI hooks.
+;; (waiting/idle/busy), `statusUpdatedAt', `updatedAt', `name', and -- when
+;; waiting -- a `waitingFor' reason.  We watch that directory and mirror the
+;; ground truth onto our own session structs, rather than reconstructing it
+;; from CLI hooks.
 
 (defcustom claude-code-ide-status-watch-debounce 0.2
   "Seconds to wait after a session-file change before refreshing run status.
