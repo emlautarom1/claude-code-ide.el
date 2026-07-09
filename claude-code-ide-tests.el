@@ -3065,6 +3065,28 @@ side effects."
                                                            "--allowedTools"
                                                            (claude-code-ide--build-claude-command)))))))
 
+(ert-deftest claude-code-ide-test-handle-post-error-echoes-id ()
+  "Error responses echo the request id, except parse errors (null id)."
+  (require 'claude-code-ide-mcp-http-server)
+  (let ((captured 'unset))
+    (cl-letf (((symbol-function 'ws-headers) (lambda (_r) nil))
+              ((symbol-function 'claude-code-ide-mcp-http-server--extract-session-id-from-path)
+               (lambda (_h) nil))
+              ((symbol-function 'claude-code-ide-mcp-http-server--send-json-response)
+               (lambda (&rest _) nil))
+              ((symbol-function 'claude-code-ide-mcp-http-server--send-json-error)
+               (lambda (_req id _code _msg) (setq captured id))))
+      ;; Unknown method -> json-rpc-error must echo the request id.
+      (cl-letf (((symbol-function 'ws-body)
+                 (lambda (_r) "{\"jsonrpc\":\"2.0\",\"id\":42,\"method\":\"nonexistent\"}")))
+        (claude-code-ide-mcp-http-server--handle-post 'req)
+        (should (equal captured 42)))
+      ;; Malformed body -> parse error must report a null id.
+      (setq captured 'unset)
+      (cl-letf (((symbol-function 'ws-body) (lambda (_r) "not json")))
+        (claude-code-ide-mcp-http-server--handle-post 'req)
+        (should (null captured))))))
+
 (provide 'claude-code-ide-tests)
 
 ;; Local Variables:

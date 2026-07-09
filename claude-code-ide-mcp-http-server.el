@@ -133,56 +133,60 @@ Returns a cons cell of (server . port)."
 Extracts session ID from the URL path and processes the request
 with the appropriate session context."
   (claude-code-ide-debug "MCP server received POST request")
-  (condition-case err
-      (let* ((headers (ws-headers request))
-             (body (ws-body request))
-             ;; Extract session ID from URL path
-             (url-session-id (claude-code-ide-mcp-http-server--extract-session-id-from-path headers))
-             (json-object (json-parse-string body :object-type 'alist))
-             (method (alist-get 'method json-object))
-             (params (alist-get 'params json-object))
-             (id (alist-get 'id json-object)))
+  ;; Bind ID in an outer LET so the error handlers can echo it back.  It stays
+  ;; nil until the request is parsed, matching the JSON-RPC rule that parse and
+  ;; invalid-request errors report a null id.
+  (let ((id nil))
+    (condition-case err
+        (let* ((headers (ws-headers request))
+               (body (ws-body request))
+               ;; Extract session ID from URL path
+               (url-session-id (claude-code-ide-mcp-http-server--extract-session-id-from-path headers))
+               (json-object (json-parse-string body :object-type 'alist))
+               (method (alist-get 'method json-object))
+               (params (alist-get 'params json-object)))
+          (setq id (alist-get 'id json-object))
 
-        (claude-code-ide-debug "MCP request - method: %s, id: %s, session-id: %s"
-                               method id url-session-id)
+          (claude-code-ide-debug "MCP request - method: %s, id: %s, session-id: %s"
+                                 method id url-session-id)
 
-        ;; Check if this is a notification (no id field)
-        (if (null id)
-            ;; Notifications don't require a response
-            (progn
-              (claude-code-ide-debug "Received notification: %s" method)
-              ;; Still close the connection for HTTP transport
-              (claude-code-ide-mcp-http-server--send-empty-response request))
-          ;; Process the request with session context
-          (let* ((claude-code-ide-mcp-server--current-session-id url-session-id)
-                 (result (claude-code-ide-mcp-http-server--dispatch method params)))
-            (claude-code-ide-debug "MCP response result computed")
-            ;; Send response
-            (claude-code-ide-mcp-http-server--send-json-response
-             request 200
-             `((jsonrpc . "2.0")
-               (id . ,id)
-               (result . ,result)))
-            (claude-code-ide-debug "MCP response sent"))))
+          ;; Check if this is a notification (no id field)
+          (if (null id)
+              ;; Notifications don't require a response
+              (progn
+                (claude-code-ide-debug "Received notification: %s" method)
+                ;; Still close the connection for HTTP transport
+                (claude-code-ide-mcp-http-server--send-empty-response request))
+            ;; Process the request with session context
+            (let* ((claude-code-ide-mcp-server--current-session-id url-session-id)
+                   (result (claude-code-ide-mcp-http-server--dispatch method params)))
+              (claude-code-ide-debug "MCP response result computed")
+              ;; Send response
+              (claude-code-ide-mcp-http-server--send-json-response
+               request 200
+               `((jsonrpc . "2.0")
+                 (id . ,id)
+                 (result . ,result)))
+              (claude-code-ide-debug "MCP response sent"))))
 
-    (json-parse-error
-     (claude-code-ide-mcp-http-server--send-json-error
-      request nil -32700 "Parse error"))
+      (json-parse-error
+       (claude-code-ide-mcp-http-server--send-json-error
+        request nil -32700 "Parse error"))
 
-    (json-rpc-error
-     (claude-code-ide-mcp-http-server--send-json-error
-      request nil (nth 1 err) (nth 2 err)))
+      (json-rpc-error
+       (claude-code-ide-mcp-http-server--send-json-error
+        request id (nth 1 err) (nth 2 err)))
 
-    (quit
-     (claude-code-ide-debug "Request cancelled by user (C-<escape>)")
-     (claude-code-ide-mcp-http-server--send-json-error
-      request nil -32001 "Operation cancelled by user"))
+      (quit
+       (claude-code-ide-debug "Request cancelled by user (C-<escape>)")
+       (claude-code-ide-mcp-http-server--send-json-error
+        request id -32001 "Operation cancelled by user"))
 
-    (error
-     (claude-code-ide-debug "Error handling request: %s"
-                            (error-message-string err))
-     (claude-code-ide-mcp-http-server--send-json-error
-      request nil -32603 (format "Internal error: %s" (error-message-string err))))))
+      (error
+       (claude-code-ide-debug "Error handling request: %s"
+                              (error-message-string err))
+       (claude-code-ide-mcp-http-server--send-json-error
+        request id -32603 (format "Internal error: %s" (error-message-string err)))))))
 
 ;;; MCP Protocol Implementation
 
