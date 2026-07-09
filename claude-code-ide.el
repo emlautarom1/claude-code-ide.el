@@ -142,17 +142,6 @@ This should be a string of space-separated flags, e.g. \"--model opus\"."
   :type 'string
   :group 'claude-code-ide)
 
-(defcustom claude-code-ide-consult-integration t
-  "Whether to auto-enable the optional `consult' integration when available.
-When non-nil and `consult' is loaded, `claude-code-ide' automatically loads
-`claude-code-ide-consult', adding a Claude session source to `consult-buffer'
-(narrow with `c') and upgrading `claude-code-ide-list-sessions' to a
-`consult'-based picker with live preview.  When `marginalia' is also loaded,
-sessions gain status/elapsed-time annotations.  Set this to nil before `consult'
-is loaded to keep the plain `completing-read' picker."
-  :type 'boolean
-  :group 'claude-code-ide)
-
 (defcustom claude-code-ide-system-prompt nil
   "System prompt to append to Claude's default system prompt.
 When non-nil, the --append-system-prompt flag will be added with this value.
@@ -1521,48 +1510,49 @@ If the buffer is already visible, switch focus to it."
         (claude-code-ide--session-name session))
       ""))
 
-(defun claude-code-ide--session-status-label (directory)
-  "Return DIRECTORY's run status as a face-propertized label.
-Any waiting reason is merged into the same column, so a waiting session
-reads e.g. \"waiting · permission prompt\"."
+(defun claude-code-ide--session-status-text (directory)
+  "Return DIRECTORY's run status merged with any reason, as plain text.
+For a waiting session this reads e.g. \"waiting · permission prompt\"."
   (let* ((session (claude-code-ide--get-session directory))
          (status (or (and session (claude-code-ide--session-status session)) "idle"))
-         (reason (and session (claude-code-ide--session-status-reason session)))
-         (face (or (cdr (assoc status claude-code-ide--run-status-faces)) 'shadow))
-         (text (if (and reason (not (string-empty-p reason)))
-                   (format "%s · %s" status reason)
-                 status)))
-    (propertize text 'face face)))
+         (reason (and session (claude-code-ide--session-status-reason session))))
+    (if (and reason (not (string-empty-p reason)))
+        (format "%s · %s" status reason)
+      status)))
 
-(defun claude-code-ide--session-affixation (sessions)
-  "Return an affixation function for the SESSIONS alist of (DISPLAY . DIR).
-Each candidate (the directory) is annotated with the session's CLI name, its
-run status and any reason, and how long it has held that status, so the picker
-shows e.g. \"~/proj  my-session  waiting · permission prompt  2m\"."
-  (lambda (candidates)
-    (mapcar
-     (lambda (cand)
-       (let* ((dir (alist-get cand sessions nil nil #'string=))
-              (name (claude-code-ide--session-display-name dir))
-              (label (claude-code-ide--session-status-label dir))
-              (age (claude-code-ide--format-status-age
-                    (and dir (claude-code-ide-session-run-status-since dir)))))
-         (list cand
-               ""
-               (format "  %s  %s  %s" (propertize name 'face 'shadow) label age))))
-     candidates)))
+(defun claude-code-ide--session-status-label (directory)
+  "Return DIRECTORY's run status text propertized with its status face."
+  (let* ((session (claude-code-ide--get-session directory))
+         (status (or (and session (claude-code-ide--session-status session)) "idle"))
+         (face (or (cdr (assoc status claude-code-ide--run-status-faces)) 'shadow)))
+    (propertize (claude-code-ide--session-status-text directory) 'face face)))
+
+(defun claude-code-ide--session-marginalia-annotation (directory)
+  "Marginalia annotation for session DIRECTORY: name, status/reason and age.
+The leading space carries the `marginalia--align' text property so `marginalia'
+aligns the annotation across candidates; column widths are left to `marginalia'.
+The name uses `marginalia-documentation', the status its run-status colour, and
+the age `marginalia-date' (matching how `marginalia' faces file dates)."
+  (let ((name (claude-code-ide--session-display-name directory))
+        (label (claude-code-ide--session-status-label directory))
+        (age (claude-code-ide--format-status-age
+              (claude-code-ide-session-run-status-since directory))))
+    (concat (propertize " " 'marginalia--align t)
+            (propertize name 'face 'marginalia-documentation)
+            "  " label
+            "  " (propertize age 'face 'marginalia-date))))
 
 (defun claude-code-ide--read-session-completing (sessions)
   "Choose a session from SESSIONS with `completing-read'.
 SESSIONS is the sorted alist of (DISPLAY . DIR); returns the chosen DISPLAY
-string.  Each candidate is annotated with its name, run status and how long it
-has held it via `claude-code-ide--session-affixation'."
-  (let* ((affixate (claude-code-ide--session-affixation sessions))
-         (table (lambda (string pred action)
-                  (if (eq action 'metadata)
-                      `(metadata (display-sort-function . identity)
-                                 (affixation-function . ,affixate))
-                    (complete-with-action action sessions string pred)))))
+string.  Candidates are the session directories, tagged with the
+`claude-session' completion category so `marginalia' -- when loaded -- annotates
+them with each session's name, run status and age."
+  (let ((table (lambda (string pred action)
+                 (if (eq action 'metadata)
+                     '(metadata (category . claude-session)
+                                (display-sort-function . identity))
+                   (complete-with-action action sessions string pred)))))
     (completing-read "Switch to: " table nil t)))
 
 (defvar claude-code-ide-session-read-function
@@ -1804,13 +1794,23 @@ If no Claude windows are visible, show the most recently accessed one."
 
 (provide 'claude-code-ide)
 
-;; Auto-load the optional `consult' integration when `consult' is present, so it
-;; works without extra user configuration.  Guarded by
-;; `claude-code-ide-consult-integration' and placed after `provide' so the
+;; Auto-load the `consult' integration whenever `consult' is present, so it
+;; works without extra user configuration.  Placed after `provide' so the
 ;; `(require 'claude-code-ide)' at the top of `claude-code-ide-consult' is a
 ;; no-op rather than re-entering this file when `consult' is already loaded.
 (with-eval-after-load 'consult
-  (when claude-code-ide-consult-integration
-    (require 'claude-code-ide-consult)))
+  (require 'claude-code-ide-consult))
+
+;; Register the `marginalia' annotator for the `claude-session' completion
+;; category on the fly whenever `marginalia' is present -- it is the only
+;; source of session annotations, so no opt-in is offered.  This is independent
+;; of `consult': it annotates whichever picker is active (the plain
+;; `completing-read' one or the `consult' upgrade), both of which tag their
+;; candidates with that category.
+(defvar marginalia-annotators)
+(with-eval-after-load 'marginalia
+  (add-to-list 'marginalia-annotators
+               '(claude-session claude-code-ide--session-marginalia-annotation
+                                builtin none)))
 
 ;;; claude-code-ide.el ends here

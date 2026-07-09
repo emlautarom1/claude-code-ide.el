@@ -24,30 +24,26 @@
 
 ;; Optional integration that surfaces live Claude Code IDE sessions in
 ;; `consult-buffer' (narrow with `c'), ordered by run status (waiting first,
-;; then idle, then busy) and -- when `marginalia' is loaded -- annotated
-;; with each session's status and how long it has held it.  Previewing a
-;; candidate shows its Claude Code buffer in the side window.
+;; then idle, then busy).  Previewing a candidate shows its Claude Code buffer
+;; in the side window.
 ;;
 ;; Loading this file also upgrades `claude-code-ide-list-sessions' itself to a
 ;; `consult'-based picker with the same live preview, replacing its default
 ;; `completing-read' front end (which stays the fallback when `consult' is not
 ;; loaded).
 ;;
-;; This file adds no hard dependency: the `consult' and `marginalia' hooks
-;; below only activate once those packages are loaded.  `claude-code-ide' loads
-;; it automatically when `consult' is present, so no manual setup is needed; set
-;; `claude-code-ide-consult-integration' to nil (before `consult' loads) to opt
-;; out and keep the plain `completing-read' picker.
+;; This file adds no hard dependency: the `consult' hook below only activates
+;; once `consult' is loaded, and `claude-code-ide' loads this file automatically
+;; when `consult' is present, so no manual setup is needed.
 
 ;;; Code:
 
 (require 'claude-code-ide)
 
-;; `consult' and `marginalia' are optional and referenced only inside the
-;; `with-eval-after-load' blocks below; declare their symbols so byte
-;; compilation stays clean when they are not installed.
+;; `consult' is optional and referenced only inside the `with-eval-after-load'
+;; block below; declare its symbols so byte compilation stays clean when it is
+;; not installed.
 (defvar consult-buffer-sources)
-(defvar marginalia-annotators)
 (declare-function consult-buffer "consult" (&optional sources))
 (declare-function consult--read "consult" (table &rest options))
 
@@ -122,21 +118,6 @@ minibuffer exits on selection."
       (unless (eq action 'return)
         (funcall state action dir)))))
 
-(defun claude-code-ide-consult--annotate (cand)
-  "Annotate Claude session directory CAND with its name, run status and age.
-The leading space carries the `marginalia--align' text property so `marginalia'
-aligns the columns to a common offset across candidates of differing width,
-the same way its built-in field annotators do."
-  (let ((name (claude-code-ide--session-display-name cand))
-        (label (claude-code-ide--session-status-label cand))
-        (age (claude-code-ide--format-status-age
-              (claude-code-ide-session-run-status-since cand))))
-    (concat (propertize " " 'marginalia--align t)
-            " "
-            (propertize name 'face 'shadow)
-            "  " label
-            "  " (propertize age 'face 'marginalia-date))))
-
 (defvar claude-code-ide-consult-source
   `( :name "Claude"
      :narrow ?c
@@ -151,9 +132,8 @@ the same way its built-in field annotators do."
 (defun claude-code-ide-consult--read-session (sessions)
   "Pick a Claude session from SESSIONS with `consult--read' and live preview.
 SESSIONS is the sorted ((DISPLAY . DIR) ...) alist; returns the chosen DISPLAY.
-The candidates are the session directories -- annotated by `marginalia' with
-each session's run status and elapsed time -- and previewed in the side window
-as you move between them.  Serves as `claude-code-ide-session-read-function'."
+The candidates are the session directories, previewed in the side window as you
+move between them.  Serves as `claude-code-ide-session-read-function'."
   (consult--read
    (mapcar #'car sessions)
    :prompt "Switch to: "
@@ -169,10 +149,6 @@ as you move between them.  Serves as `claude-code-ide-session-read-function'."
   ;; picker gains the same preview as the `consult-buffer' source.
   (setq claude-code-ide-session-read-function
         #'claude-code-ide-consult--read-session))
-
-(with-eval-after-load 'marginalia
-  (add-to-list 'marginalia-annotators
-               '(claude-session claude-code-ide-consult--annotate builtin none)))
 
 (provide 'claude-code-ide-consult)
 ;;; claude-code-ide-consult.el ends here

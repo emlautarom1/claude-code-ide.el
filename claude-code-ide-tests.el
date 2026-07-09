@@ -2902,22 +2902,21 @@ real command, then restore the mock for the remaining tests."
     (should-not (claude-code-ide--get-session dir))
     (should-not (claude-code-ide-session-run-status dir))))
 
-(ert-deftest claude-code-ide-test-session-affixation ()
-  "The affixation annotates candidates with name, status/reason and age."
+(ert-deftest claude-code-ide-test-session-marginalia-annotation ()
+  "The marginalia annotation carries the align marker and the session columns."
   (clrhash claude-code-ide--sessions)
-  (let* ((dir "/tmp/ccide-affix-test/")
-         (display (abbreviate-file-name dir))
-         (sessions (list (cons display dir))))
+  (let ((dir "/tmp/ccide-annot-test/"))
     (unwind-protect
         (progn
           (claude-code-ide-tests--seed-status dir "waiting" nil "permission prompt" "my-sess")
-          (let* ((affixate (claude-code-ide--session-affixation sessions))
-                 (entry (car (funcall affixate (list display)))))
-            (should (equal (nth 0 entry) display))            ; candidate unchanged
-            (should (equal (nth 1 entry) ""))                 ; empty prefix
-            (should (string-match-p "my-sess" (nth 2 entry))) ; name in suffix
-            (should (string-match-p "waiting" (nth 2 entry))) ; status in suffix
-            (should (string-match-p "permission prompt" (nth 2 entry))))) ; reason merged
+          (let ((ann (claude-code-ide--session-marginalia-annotation
+                      (abbreviate-file-name dir))))
+            ;; The leading character is the marker marginalia aligns on.
+            (should (eq (get-text-property 0 'marginalia--align ann) t))
+            ;; Name, status and reason all appear in the annotation.
+            (should (string-match-p "my-sess" ann))
+            (should (string-match-p "waiting" ann))
+            (should (string-match-p "permission prompt" ann))))
       (clrhash claude-code-ide--sessions))))
 
 (ert-deftest claude-code-ide-test-list-sessions-ordering ()
@@ -3048,28 +3047,8 @@ displays the chosen session's buffer -- the seam the consult reader hooks into."
       (claude-code-ide-tests--clear-processes)
       (when (buffer-live-p buffer) (kill-buffer buffer)))))
 
-(ert-deftest claude-code-ide-test-consult-annotate-alignment ()
-  "The consult annotator marks its leading space for `marginalia' alignment.
-This lets the columns line up across directories of differing width."
-  (require 'claude-code-ide-consult)
-  (clrhash claude-code-ide--sessions)
-  (let ((dir "/tmp/ccide-consult-annot/"))
-    (unwind-protect
-        (progn
-          (claude-code-ide-tests--seed-status dir "waiting" nil "permission prompt")
-          (let ((ann (claude-code-ide-consult--annotate (abbreviate-file-name dir))))
-            ;; The first character is the alignment marker marginalia looks for.
-            (should (eq (get-text-property 0 'marginalia--align ann) t))
-            (should (string-match-p "waiting" ann))))
-      (clrhash claude-code-ide--sessions))))
-
-(ert-deftest claude-code-ide-test-consult-integration-defcustom ()
-  "The consult auto-load toggle exists and defaults to enabled."
-  (should (boundp 'claude-code-ide-consult-integration))
-  (should (eq (default-value 'claude-code-ide-consult-integration) t)))
-
-(ert-deftest claude-code-ide-test-consult-integration-toggle ()
-  "The `consult' after-load hook auto-loads the integration per the opt-out toggle.
+(ert-deftest claude-code-ide-test-consult-auto-load ()
+  "The `consult' after-load hook auto-loads the integration unconditionally.
 Runs the actual form `claude-code-ide' registers in `after-load-alist' (not a
 re-implementation), so removing or mis-wiring the auto-load is caught.  `require'
 is stubbed so the hook can run without `consult' installed; `consult-buffer-sources'
@@ -3079,20 +3058,18 @@ co-registered `claude-code-ide-consult' hook has no real `consult' and no lastin
 side effects."
   (let ((hooks (cdr (assq 'consult after-load-alist)))
         (orig-require (symbol-function 'require))
-        (claude-code-ide-session-read-function claude-code-ide-session-read-function))
+        (claude-code-ide-session-read-function claude-code-ide-session-read-function)
+        (loaded nil))
     ;; The auto-load form must be registered, else the integration never loads.
     (should hooks)
-    (dolist (case '((nil . nil) (t . t)))
-      (let ((claude-code-ide-consult-integration (car case))
-            (loaded nil))
-        (cl-letf (((symbol-function 'require)
-                   (lambda (feature &rest args)
-                     (if (eq feature 'claude-code-ide-consult)
-                         (setq loaded t)
-                       (apply orig-require feature args)))))
-          (cl-progv '(consult-buffer-sources) (list nil)
-            (dolist (hook hooks) (funcall hook))))
-        (should (eq loaded (cdr case)))))))
+    (cl-letf (((symbol-function 'require)
+               (lambda (feature &rest args)
+                 (if (eq feature 'claude-code-ide-consult)
+                     (setq loaded t)
+                   (apply orig-require feature args)))))
+      (cl-progv '(consult-buffer-sources) (list nil)
+        (dolist (hook hooks) (funcall hook))))
+    (should loaded)))
 
 (ert-deftest claude-code-ide-emacs-tools-test-eager-registration ()
   "The built-in tools are registered at load, without any setup call."
