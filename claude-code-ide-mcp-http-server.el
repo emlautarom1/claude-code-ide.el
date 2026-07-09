@@ -58,7 +58,7 @@
 
 ;; Signaled to report a JSON-RPC level error.  The data is (CODE MESSAGE);
 ;; the request handler turns it into a JSON-RPC error response.
-(define-error 'json-rpc-error "JSON-RPC error")
+(define-error 'claude-code-ide-mcp-json-rpc-error "JSON-RPC error")
 
 ;;; Server State
 
@@ -173,7 +173,7 @@ with the appropriate session context."
        (claude-code-ide-mcp-http-server--send-json-error
         request nil -32700 "Parse error"))
 
-      (json-rpc-error
+      (claude-code-ide-mcp-json-rpc-error
        (claude-code-ide-mcp-http-server--send-json-error
         request id (nth 1 err) (nth 2 err)))
 
@@ -202,7 +202,7 @@ PARAMS is the parameters alist."
     ("tools/call"
      (claude-code-ide-mcp-http-server--handle-tools-call params))
     (_
-     (signal 'json-rpc-error (list -32601 "Method not found")))))
+     (signal 'claude-code-ide-mcp-json-rpc-error (list -32601 "Method not found")))))
 
 (defun claude-code-ide-mcp-http-server--handle-initialize (_params)
   "Handle the initialize method."
@@ -235,7 +235,7 @@ PARAMS is the parameters alist."
 
     (unless (and tool-spec
                  (claude-code-ide-mcp-server--tool-enabled-p tool-spec))
-      (signal 'json-rpc-error (list -32602 (format "Unknown tool: %s" tool-name))))
+      (signal 'claude-code-ide-mcp-json-rpc-error (list -32602 (format "Unknown tool: %s" tool-name))))
 
     ;; Extract function and args from the tool spec
     (let* ((tool-function (plist-get tool-spec :function))
@@ -306,7 +306,7 @@ Returns a list of arguments in the correct order."
              (optional (plist-get spec :optional))
              (value (alist-get (intern name) args)))
         (when (and (not optional) (not value))
-          (signal 'json-rpc-error
+          (signal 'claude-code-ide-mcp-json-rpc-error
                   (list -32602 (format "Missing required argument: %s" name))))
         (push value result)))))
 

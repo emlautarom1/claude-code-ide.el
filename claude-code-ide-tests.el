@@ -2979,7 +2979,7 @@ side effects."
   (let ((claude-code-ide-report-status nil))
     (should-error (claude-code-ide-mcp-http-server--handle-tools-call
                    '((name . "set-session-status")))
-                  :type 'json-rpc-error))
+                  :type 'claude-code-ide-mcp-json-rpc-error))
   ;; Enabled -> the call is dispatched (no Unknown tool error).
   (let ((claude-code-ide-report-status t)
         (claude-code-ide-mcp-server--current-session-id nil))
@@ -3076,7 +3076,7 @@ side effects."
                (lambda (&rest _) nil))
               ((symbol-function 'claude-code-ide-mcp-http-server--send-json-error)
                (lambda (_req id _code _msg) (setq captured id))))
-      ;; Unknown method -> json-rpc-error must echo the request id.
+      ;; Unknown method -> claude-code-ide-mcp-json-rpc-error must echo the request id.
       (cl-letf (((symbol-function 'ws-body)
                  (lambda (_r) "{\"jsonrpc\":\"2.0\",\"id\":42,\"method\":\"nonexistent\"}")))
         (claude-code-ide-mcp-http-server--handle-post 'req)
