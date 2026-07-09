@@ -23,7 +23,7 @@
 ;;; Commentary:
 
 ;; This file provides Emacs-specific MCP tools for Claude Code IDE.
-;; These tools expose Emacs functionality such as xref (cross-references)
+;; These tools advertise Emacs functionality such as xref (cross-references)
 ;; and project information to Claude, enabling AI-assisted code navigation
 ;; and understanding within the correct project context.
 
@@ -53,9 +53,7 @@
 ;;; Customization
 
 (defcustom claude-code-ide-enable-emacs-tools nil
-  "Whether the built-in Emacs navigation MCP tools are advertised to Claude.
-The tools are always registered; this only controls whether they are
-exposed to and callable by Claude via the MCP tools server."
+  "Whether the built-in Emacs navigation MCP tools are advertised to Claude."
   :type 'boolean
   :group 'claude-code-ide-mcp-server)
 
@@ -375,9 +373,8 @@ Intended to be called by Claude Code hooks, not interactively."
 
 ;;; Tool Registration
 
-;; The built-in tools are registered eagerly at load.  Whether each is
-;; advertised to (and callable by) Claude is controlled by its `:enabled'
-;; predicate: navigation tools follow `claude-code-ide-enable-emacs-tools',
+;; Each tool's `:enabled' predicate controls whether it is advertised to
+;; Claude: navigation tools follow `claude-code-ide-enable-emacs-tools',
 ;; the status tool follows `claude-code-ide-report-status'.
 
 ;; Register xref tools

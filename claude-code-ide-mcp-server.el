@@ -22,7 +22,7 @@
 
 ;;; Commentary:
 
-;; This module provides an MCP tools server that exposes Emacs functions
+;; This module provides an MCP tools server that advertises Emacs functions
 ;; to Claude Code.  Unlike the IDE MCP server (which uses WebSocket),
 ;; this uses HTTP/Streamable HTTP transport and provides access to
 ;; general Emacs functionality like xref, project navigation, etc.
@@ -64,7 +64,7 @@ If nil, a random available port will be selected automatically."
   :group 'claude-code-ide-mcp-server)
 
 (defcustom claude-code-ide-mcp-server-tools nil
-  "List of Emacs functions to expose via the MCP tools server.
+  "List of Emacs functions to advertise via the MCP tools server.
 Each entry is a plist as produced by `claude-code-ide-make-tool', with:
   :function - The function (symbol or lambda) that runs the tool
   :name - The tool name (string, recommended snake_case)

@@ -56,10 +56,10 @@
 ;; M-x claude-code-ide-fix-error-at-point - Ask Claude to fix the diagnostic at point
 ;;
 ;; Emacs MCP Tools:
-;; To expose the built-in Emacs navigation tools to Claude, enable the MCP
-;; tools server and the tools in your config:
-;;   (setq claude-code-ide-enable-mcp-server t
-;;         claude-code-ide-enable-emacs-tools t)
+;; To advertise the built-in Emacs navigation tools to Claude, enable the
+;; MCP server and the Emacs tools in your config:
+;;   (setq claude-code-ide-enable-mcp-server t)   ; Enable the MCP server
+;;   (setq claude-code-ide-enable-emacs-tools t)  ; Enable the Emacs tools
 
 ;;; Code:
 
@@ -237,7 +237,7 @@ diff comparison."
   :group 'claude-code-ide)
 
 (defcustom claude-code-ide-enable-execute-code nil
-  "Whether to expose the executeCode tool to the model.
+  "Whether to advertise the executeCode tool to the model.
 When non-nil, Claude Code can evaluate Elisp expressions in Emacs
 via the executeCode MCP tool.  Nil (the default) hides the tool entirely."
   :type 'boolean
