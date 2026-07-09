@@ -731,18 +731,9 @@ This function binds:
 
 ;;; Completion Notifications
 
-(defun claude-code-ide--pulse-modeline ()
-  "Pulse the modeline to provide a visual notification.
-Invert the modeline face four times at 0.1s intervals so it flashes and
-returns to its original state."
-  (dotimes (i 4)
-    (run-at-time (* i 0.1) nil
-                 (lambda () (invert-face 'mode-line)))))
-
 (defun claude-code-ide-default-notification (title message)
-  "Default notification: echo TITLE and MESSAGE and pulse the modeline."
-  (message "%s: %s" title message)
-  (claude-code-ide--pulse-modeline))
+  "Default notification: echo TITLE and MESSAGE in the echo area."
+  (message "%s: %s" title message))
 
 (defun claude-code-ide--notify (&rest _)
   "Notify the user that Claude has finished and is awaiting input.
