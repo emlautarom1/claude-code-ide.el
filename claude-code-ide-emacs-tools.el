@@ -40,12 +40,6 @@
 (declare-function treesit-node-text "treesit" (node &optional no-property))
 (declare-function treesit-node-field-name "treesit" (node))
 
-;; Defined in claude-code-ide.el.  We can't `require' it here: claude-code-ide
-;; already requires this file, so the dependency is circular.  The function
-;; carries an autoload cookie, so a call to it pulls in claude-code-ide on
-;; demand even if the tool fires before the main package has been loaded.
-(declare-function claude-code-ide--set-run-status "claude-code-ide" (directory status))
-
 ;;; Customization
 
 (defcustom claude-code-ide-enable-emacs-tools nil
@@ -53,22 +47,9 @@
   :type 'boolean
   :group 'claude-code-ide-mcp-server)
 
-(defcustom claude-code-ide-report-status nil
-  "Whether sessions report their run status (idle/working/blocked) to Emacs.
-When non-nil and the MCP tools server is enabled, the package hands the
-CLI a small hooks settings file (see `claude-code-ide--status-hooks-file')
-via --settings so it calls the `set-session-status' MCP tool on lifecycle
-events.  The status is shown in `claude-code-ide-list-sessions'."
-  :type 'boolean
-  :group 'claude-code-ide)
-
 (defun claude-code-ide-emacs-tools--nav-enabled-p ()
   "Return non-nil when the built-in navigation tools should be advertised."
   claude-code-ide-enable-emacs-tools)
-
-(defun claude-code-ide-emacs-tools--status-enabled-p ()
-  "Return non-nil when the session-status tool should be advertised."
-  claude-code-ide-report-status)
 
 ;;; Tool Functions
 
@@ -362,25 +343,10 @@ If INCLUDE_CHILDREN is non-nil, include child nodes."
          (format "Error getting tree-sitter info for %s: %s"
                  file-path (error-message-string err)))))))
 
-(defun claude-code-ide-mcp-set-session-status (status)
-  "Record STATUS as the run status of the calling Claude session.
-STATUS is one of \"idle\", \"working\", or \"blocked\"; anything else is
-treated as idle.  The session is resolved from the MCP call's own context,
-so its project directory keys the table `claude-code-ide-list-sessions' reads.
-Intended to be called by Claude Code hooks, not interactively."
-  (let ((status (or (and (member status '("idle" "working" "blocked")) status)
-                    "idle")))
-    (if-let* ((ctx (claude-code-ide-mcp-server-get-session-context))
-              (dir (plist-get ctx :project-dir)))
-        (progn (claude-code-ide--set-run-status dir status)
-               (format "status: %s" status))
-      "No session context available")))
-
 ;;; Tool Registration
 
 ;; Each tool's `:enabled' predicate controls whether it is advertised to
-;; Claude: navigation tools follow `claude-code-ide-enable-emacs-tools',
-;; the status tool follows `claude-code-ide-report-status'.
+;; Claude: the navigation tools follow `claude-code-ide-enable-emacs-tools'.
 
 ;; Register xref tools
 (claude-code-ide-make-tool
@@ -454,16 +420,6 @@ Intended to be called by Claude Code hooks, not interactively."
                 :type boolean
                 :description "Include child nodes"
                 :optional t)))
-
-;; Register session run-status tool (driven by Claude Code hooks)
-(claude-code-ide-make-tool
- :function #'claude-code-ide-mcp-set-session-status
- :name "set-session-status"
- :description "Report this Claude session's run status to Emacs. Intended to be called by Claude Code hooks, not interactively."
- :enabled #'claude-code-ide-emacs-tools--status-enabled-p
- :args '((:name "status"
-                :type string
-                :description "One of: idle, working, blocked")))
 
 (provide 'claude-code-ide-emacs-tools)
 ;;; claude-code-ide-emacs-tools.el ends here

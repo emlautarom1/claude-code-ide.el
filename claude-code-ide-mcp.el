@@ -173,25 +173,29 @@ Returns the session if found, nil otherwise."
 
 ;;; Lockfile Management
 
-(defun claude-code-ide-mcp--lockfile-directory ()
-  "Return the directory for MCP lockfiles.
-The Claude Code CLI discovers the MCP server by scanning this directory for
-`<port>.lock' files, so both sides must agree on it.  The CLI derives it from
-the `CLAUDE_CONFIG_DIR' environment variable, defaulting to `~/.claude'; we
-mirror that here.  Since the CLI runs as a subprocess of Emacs and inherits
-this environment, setting `CLAUDE_CONFIG_DIR' relocates the lockfile on both
-sides in lockstep.
+(defun claude-code-ide--config-directory ()
+  "Return the Claude Code configuration directory, slash-terminated.
+The CLI derives it from the `CLAUDE_CONFIG_DIR' environment variable,
+defaulting to `~/.claude'; we mirror that here.  Since the CLI runs as a
+subprocess of Emacs and inherits this environment, setting
+`CLAUDE_CONFIG_DIR' relocates it on both sides in lockstep.
 
 An empty `CLAUDE_CONFIG_DIR' is treated as unset (matching the wider Claude
-Code convention), so a misconfigured shell does not resolve the lockfile
-relative to `default-directory'."
+Code convention), so a misconfigured shell does not resolve paths relative
+to `default-directory'."
   (let ((config-dir (getenv "CLAUDE_CONFIG_DIR")))
     (expand-file-name
-     "ide/"
      (file-name-as-directory
       (if (and config-dir (not (string= config-dir "")))
           config-dir
         "~/.claude")))))
+
+(defun claude-code-ide-mcp--lockfile-directory ()
+  "Return the directory for MCP lockfiles.
+The Claude Code CLI discovers the MCP server by scanning this directory for
+`<port>.lock' files, so both sides must agree on it.  It lives under
+`claude-code-ide--config-directory'."
+  (expand-file-name "ide/" (claude-code-ide--config-directory)))
 
 (defun claude-code-ide-mcp--lockfile-path (port)
   "Return the lockfile path for PORT."

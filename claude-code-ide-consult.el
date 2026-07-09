@@ -123,19 +123,19 @@ minibuffer exits on selection."
         (funcall state action dir)))))
 
 (defun claude-code-ide-consult--annotate (cand)
-  "Annotate Claude session directory CAND with its run status and elapsed time.
+  "Annotate Claude session directory CAND with its name, run status and age.
 The leading space carries the `marginalia--align' text property so `marginalia'
-aligns the status column to a common offset across candidates of differing
-width, the same way its built-in field annotators do."
-  (let* ((status (or (claude-code-ide-session-run-status cand) "idle"))
-         (face (or (cdr (assoc status claude-code-ide--run-status-faces)) 'shadow))
-         (age (claude-code-ide--format-status-age
-               (claude-code-ide-session-run-status-since cand))))
+aligns the columns to a common offset across candidates of differing width,
+the same way its built-in field annotators do."
+  (let ((name (claude-code-ide--session-display-name cand))
+        (label (claude-code-ide--session-status-label cand))
+        (age (claude-code-ide--format-status-age
+              (claude-code-ide-session-run-status-since cand))))
     (concat (propertize " " 'marginalia--align t)
             " "
-            (propertize (format "%-8s" status) 'face face)
-            " "
-            (propertize (format "%-6s" age) 'face 'marginalia-date))))
+            (propertize name 'face 'shadow)
+            "  " label
+            "  " (propertize age 'face 'marginalia-date))))
 
 (defvar claude-code-ide-consult-source
   `( :name "Claude"

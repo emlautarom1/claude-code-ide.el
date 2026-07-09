@@ -64,6 +64,8 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'filenotify)
+(require 'json)
 (require 'project)
 (require 'claude-code-ide-debug)
 (require 'claude-code-ide-mcp)
@@ -116,19 +118,6 @@
   "Claude Code integration for Emacs."
   :group 'tools
   :prefix "claude-code-ide-")
-
-(defvar claude-code-ide--package-directory
-  (file-name-directory (or load-file-name buffer-file-name default-directory))
-  "Directory the claude-code-ide package is installed in.
-Resolved at load time so files shipped with the package (such as the
-session-status hooks) can be located regardless of the install method.")
-
-(defconst claude-code-ide--status-hooks-file
-  (expand-file-name "claude-code-ide-hooks.json" claude-code-ide--package-directory)
-  "Absolute path to the Claude Code hooks settings shipped with the package.
-These hooks call the `set-session-status' MCP tool on session lifecycle
-events.  Passed to the CLI via --settings when `claude-code-ide-report-status'
-is non-nil.")
 
 (defcustom claude-code-ide-cli-path "claude"
   "Path to the Claude Code CLI executable."
@@ -366,7 +355,7 @@ Instances live in `claude-code-ide--sessions', keyed by the session's
 canonical project directory."
   process         ; the CLI terminal process
   session-id      ; the Emacs-generated session ID string
-  status          ; run status: "idle", "working", "blocked", or nil
+  status          ; run status: "waiting", "idle", "busy", or nil
   status-since    ; time the session entered STATUS
   status-reason   ; reason accompanying STATUS (e.g. "permission prompt"), or nil
   name)           ; session name reported by the CLI
@@ -382,10 +371,11 @@ write agrees regardless of how the caller spelled the path.")
 ;;; Session Run Status
 
 (defconst claude-code-ide--run-status-faces
-  '(("blocked" . error)     ; red   -- needs you, sorted first
+  '(("waiting" . error)     ; red   -- needs you, sorted first
     ("idle"    . shadow)    ; grey
-    ("working" . success))  ; green -- busy, sorted last
+    ("busy"    . success))  ; green -- working, sorted last
   "Known session run statuses, in the order they sort in the session list.
+These mirror the statuses the Claude Code CLI reports in its session files.
 Top = needs attention first.  Each key is the only valid status string and
 doubles as the label; its value is the face used to display it.")
 
@@ -424,29 +414,16 @@ trailing slash."
   (when-let ((session (claude-code-ide--get-session directory)))
     (claude-code-ide--session-status-since session)))
 
-;;;###autoload
-(defun claude-code-ide--set-run-status (directory status)
-  "Record STATUS as the run status for session DIRECTORY.
-STATUS is one of \"idle\", \"working\", or \"blocked\"; anything else is
-treated as \"idle\".  The original since-time is kept while the status is
-unchanged; only a real transition restamps it."
-  (let ((status (if (assoc status claude-code-ide--run-status-faces) status "idle"))
-        (session (claude-code-ide--ensure-session directory)))
-    (unless (equal (claude-code-ide--session-status session) status)
-      (setf (claude-code-ide--session-status-since session) (current-time)))
-    (setf (claude-code-ide--session-status session) status)
-    status))
-
-(defun claude-code-ide--clear-run-status (directory)
-  "Drop DIRECTORY's recorded run status, leaving the rest of the entry intact."
-  (when-let ((session (claude-code-ide--get-session directory)))
-    (setf (claude-code-ide--session-status session) nil
-          (claude-code-ide--session-status-since session) nil
-          (claude-code-ide--session-status-reason session) nil)))
+(defun claude-code-ide--map-cli-status (status)
+  "Map a CLI STATUS string to a known run status.
+Recognised statuses (`waiting', `idle', `busy') pass through unchanged;
+anything else -- including a status a future CLI version might introduce --
+falls back to \"idle\" so the session list stays sensible."
+  (if (assoc status claude-code-ide--run-status-faces) status "idle"))
 
 (defun claude-code-ide--run-status-rank (directory)
   "Sort key for session DIRECTORY: its status's position in the status table.
-This orders blocked before idle before working.  Unknown statuses sort last."
+This orders waiting before idle before busy.  Unknown statuses sort last."
   (let ((status (or (claude-code-ide-session-run-status directory) "idle")))
     (or (seq-position claude-code-ide--run-status-faces status
                       (lambda (entry s) (string= (car entry) s)))
@@ -462,6 +439,119 @@ Returns an empty string when SINCE is nil."
             ((< secs 3600) (format "%dm" (floor (/ secs 60))))
             ((< secs 86400) (format "%dh" (floor (/ secs 3600))))
             (t (format "%dd" (floor (/ secs 86400))))))))
+
+;;; Session Status Watcher
+
+;; The Claude Code CLI writes one JSON file per running session under
+;; `<config>/sessions/<pid>.json', recording that session's `cwd', `status'
+;; (waiting/idle/busy), `statusUpdatedAt', `name', and -- when waiting -- a
+;; `waitingFor' reason.  We watch that directory and mirror the ground truth
+;; onto our own session structs, rather than reconstructing it from CLI hooks.
+
+(defcustom claude-code-ide-status-watch-debounce 0.2
+  "Seconds to wait after a session-file change before refreshing run status.
+Coalesces a burst of file-notify events into a single rescan."
+  :type 'number
+  :group 'claude-code-ide)
+
+(defvar claude-code-ide--sessions-watch-descriptor nil
+  "File-notify descriptor for the CLI sessions directory, or nil when idle.")
+
+(defvar claude-code-ide--sessions-watch-timer nil
+  "Debounce timer coalescing session-file change events, or nil.")
+
+(defun claude-code-ide--sessions-directory ()
+  "Return the directory the CLI writes per-session JSON files to."
+  (expand-file-name "sessions/" (claude-code-ide--config-directory)))
+
+(defun claude-code-ide--read-session-file (file)
+  "Parse the CLI session JSON at FILE, returning an alist, or nil on error.
+The CLI writes the file atomically, but a read can still race a rewrite;
+a parse failure is treated as \"nothing to update\"."
+  (condition-case err
+      (with-temp-buffer
+        (insert-file-contents file)
+        (json-parse-string (buffer-string) :object-type 'alist))
+    (error
+     (claude-code-ide-debug "Failed to read session file %s: %s" file err)
+     nil)))
+
+(defun claude-code-ide--epoch-millis->time (millis)
+  "Convert MILLIS epoch milliseconds to an Emacs time value, or nil."
+  (when (numberp millis)
+    (seconds-to-time (/ millis 1000.0))))
+
+(defun claude-code-ide--refresh-session-statuses ()
+  "Read the CLI session files and update matching sessions' run status.
+Only directories already tracked in `claude-code-ide--sessions' are updated;
+files for untracked directories are ignored, and the watcher never creates
+entries.  When several files share a `cwd', the most recently updated wins."
+  (let ((dir (claude-code-ide--sessions-directory))
+        (latest (make-hash-table :test 'equal))) ; canonical dir -> parsed alist
+    (when (file-directory-p dir)
+      (dolist (file (directory-files dir t "\\.json\\'"))
+        (when-let* ((data (claude-code-ide--read-session-file file))
+                    (cwd (alist-get 'cwd data)))
+          (let* ((key (claude-code-ide--session-dir-key cwd))
+                 (prev (gethash key latest)))
+            (when (or (null prev)
+                      (> (or (alist-get 'updatedAt data) 0)
+                         (or (alist-get 'updatedAt prev) 0)))
+              (puthash key data latest)))))
+      (maphash
+       (lambda (key data)
+         (when-let ((session (gethash key claude-code-ide--sessions)))
+           (setf (claude-code-ide--session-status session)
+                 (claude-code-ide--map-cli-status (alist-get 'status data))
+                 (claude-code-ide--session-status-since session)
+                 (claude-code-ide--epoch-millis->time (alist-get 'statusUpdatedAt data))
+                 (claude-code-ide--session-status-reason session)
+                 (alist-get 'waitingFor data)
+                 (claude-code-ide--session-name session)
+                 (alist-get 'name data))))
+       latest))))
+
+(defun claude-code-ide--on-sessions-change (_event)
+  "Handle a file-notify _EVENT from the sessions directory.
+Debounced: a rescan runs once activity settles for
+`claude-code-ide-status-watch-debounce' seconds."
+  (when claude-code-ide--sessions-watch-timer
+    (cancel-timer claude-code-ide--sessions-watch-timer))
+  (setq claude-code-ide--sessions-watch-timer
+        (run-with-timer
+         claude-code-ide-status-watch-debounce nil
+         (lambda ()
+           (setq claude-code-ide--sessions-watch-timer nil)
+           (claude-code-ide--refresh-session-statuses)))))
+
+(defun claude-code-ide--start-sessions-watch ()
+  "Begin watching the CLI sessions directory for run-status updates.
+Idempotent, and degrades gracefully when no file-notify backend is
+available -- in that case the session list still refreshes on open."
+  (unless claude-code-ide--sessions-watch-descriptor
+    (let ((dir (claude-code-ide--sessions-directory)))
+      (condition-case err
+          (progn
+            (make-directory dir t)
+            (setq claude-code-ide--sessions-watch-descriptor
+                  (file-notify-add-watch dir '(change)
+                                         #'claude-code-ide--on-sessions-change))
+            ;; Seed from whatever the CLI has already written.
+            (claude-code-ide--refresh-session-statuses))
+        (error
+         (claude-code-ide-debug "Could not watch sessions directory %s: %s" dir err)
+         (setq claude-code-ide--sessions-watch-descriptor nil))))))
+
+(defun claude-code-ide--stop-sessions-watch ()
+  "Stop watching the CLI sessions directory and cancel any pending rescan."
+  (when claude-code-ide--sessions-watch-timer
+    (cancel-timer claude-code-ide--sessions-watch-timer)
+    (setq claude-code-ide--sessions-watch-timer nil))
+  (when claude-code-ide--sessions-watch-descriptor
+    (file-notify-rm-watch claude-code-ide--sessions-watch-descriptor)
+    (setq claude-code-ide--sessions-watch-descriptor nil)))
+
+(add-hook 'kill-emacs-hook #'claude-code-ide--stop-sessions-watch)
 
 ;;; Vterm Rendering Optimization
 
@@ -979,6 +1069,9 @@ If `claude-code-ide-focus-on-open' is non-nil, the window is selected."
           (when (and (eq claude-code-ide-terminal-backend 'vterm)
                      (= (hash-table-count claude-code-ide--sessions) 0))
             (advice-remove 'vterm--filter #'claude-code-ide--vterm-bell-detector))
+          ;; Stop watching the CLI session files once no sessions remain
+          (when (= (hash-table-count claude-code-ide--sessions) 0)
+            (claude-code-ide--stop-sessions-watch))
           ;; Stop MCP server for this project directory
           (claude-code-ide-mcp-stop-session directory)
           ;; Notify MCP tools server about session end with session ID
@@ -1086,15 +1179,7 @@ Additional flags from `claude-code-ide-cli-extra-flags' are also included."
                   ;; String pattern or nil
                   (t claude-code-ide-mcp-allowed-tools))))
             (when (and allowed-tools (not (string-empty-p allowed-tools)))
-              (setq claude-cmd (concat claude-cmd " --allowedTools " allowed-tools))))
-          ;; Hand the CLI our session-status hooks (which call the
-          ;; `set-session-status' tool on the emacs-tools server configured
-          ;; above) so it reports run status to Emacs without the user having
-          ;; to wire hooks into their own settings.
-          (when (and claude-code-ide-report-status
-                     (file-exists-p claude-code-ide--status-hooks-file))
-            (setq claude-cmd (concat claude-cmd " --settings "
-                                     (shell-quote-argument claude-code-ide--status-hooks-file)))))))
+              (setq claude-cmd (concat claude-cmd " --allowedTools " allowed-tools)))))))
     claude-cmd))
 
 (defun claude-code-ide--terminal-position-keeper (window-list)
@@ -1301,6 +1386,8 @@ This function handles:
                 (setf (claude-code-ide--session-session-id
                        (claude-code-ide--get-session working-dir))
                       session-id)
+                ;; Watch the CLI's session files so run status stays current.
+                (claude-code-ide--start-sessions-watch)
                 ;; Set up process sentinel to clean up when Claude exits.
                 ;; The ghostel backend stashes its native sentinel on the
                 ;; process so we can chain it here — otherwise ghostel's
@@ -1428,29 +1515,48 @@ If the buffer is already visible, switch focus to it."
           (claude-code-ide--display-buffer-in-side-window buffer))
       (user-error "No Claude Code session for this project.  Use M-x claude-code-ide to start one"))))
 
+(defun claude-code-ide--session-display-name (directory)
+  "Return DIRECTORY's CLI-reported session name, or an empty string."
+  (or (when-let ((session (claude-code-ide--get-session directory)))
+        (claude-code-ide--session-name session))
+      ""))
+
+(defun claude-code-ide--session-status-label (directory)
+  "Return DIRECTORY's run status as a face-propertized label.
+Any waiting reason is merged into the same column, so a blocked session
+reads e.g. \"waiting · permission prompt\"."
+  (let* ((session (claude-code-ide--get-session directory))
+         (status (or (and session (claude-code-ide--session-status session)) "idle"))
+         (reason (and session (claude-code-ide--session-status-reason session)))
+         (face (or (cdr (assoc status claude-code-ide--run-status-faces)) 'shadow))
+         (text (if (and reason (not (string-empty-p reason)))
+                   (format "%s · %s" status reason)
+                 status)))
+    (propertize text 'face face)))
+
 (defun claude-code-ide--session-affixation (sessions)
   "Return an affixation function for the SESSIONS alist of (DISPLAY . DIR).
-Each candidate is prefixed with its run status (face-propertized) and how
-long it has held it, so the picker shows e.g. \"blocked  2m  ~/proj\"."
+Each candidate (the directory) is annotated with the session's CLI name, its
+run status and any reason, and how long it has held that status, so the picker
+shows e.g. \"~/proj  my-session  waiting · permission prompt  2m\"."
   (lambda (candidates)
     (mapcar
      (lambda (cand)
        (let* ((dir (alist-get cand sessions nil nil #'string=))
-              (status (or (and dir (claude-code-ide-session-run-status dir)) "idle"))
-              (face (or (cdr (assoc status claude-code-ide--run-status-faces)) 'shadow))
+              (name (claude-code-ide--session-display-name dir))
+              (label (claude-code-ide--session-status-label dir))
               (age (claude-code-ide--format-status-age
                     (and dir (claude-code-ide-session-run-status-since dir)))))
          (list cand
-               (format "%-8s %-5s "
-                       (propertize status 'face face) age)
-               "")))
+               ""
+               (format "  %s  %s  %s" (propertize name 'face 'shadow) label age))))
      candidates)))
 
 (defun claude-code-ide--read-session-completing (sessions)
   "Choose a session from SESSIONS with `completing-read'.
 SESSIONS is the sorted alist of (DISPLAY . DIR); returns the chosen DISPLAY
-string.  Each candidate is prefixed with its run status and how long it has
-held it via `claude-code-ide--session-affixation'."
+string.  Each candidate is annotated with its name, run status and how long it
+has held it via `claude-code-ide--session-affixation'."
   (let* ((affixate (claude-code-ide--session-affixation sessions))
          (table (lambda (string pred action)
                   (if (eq action 'metadata)
@@ -1476,6 +1582,9 @@ is `claude-code-ide-session-read-function'; loading `claude-code-ide-consult'
 upgrades it to a `consult'-based one with live preview."
   (interactive)
   (claude-code-ide--cleanup-dead-processes)
+  ;; Pull the latest run status from the CLI session files in case a
+  ;; file-notify event was missed or the watcher is unavailable.
+  (claude-code-ide--refresh-session-statuses)
   (let (sessions)
     (maphash (lambda (directory _)
                (push (cons (abbreviate-file-name directory) directory) sessions))
