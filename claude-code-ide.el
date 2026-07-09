@@ -1504,44 +1504,6 @@ If the buffer is already visible, switch focus to it."
           (claude-code-ide--display-buffer-in-side-window buffer))
       (user-error "No Claude Code session for this project.  Use M-x claude-code-ide to start one"))))
 
-(defun claude-code-ide--session-display-name (directory)
-  "Return DIRECTORY's CLI-reported session name, or an empty string."
-  (or (when-let ((session (claude-code-ide--get-session directory)))
-        (claude-code-ide--session-name session))
-      ""))
-
-(defun claude-code-ide--session-status-text (directory)
-  "Return DIRECTORY's run status merged with any reason, as plain text.
-For a waiting session this reads e.g. \"waiting · permission prompt\"."
-  (let* ((session (claude-code-ide--get-session directory))
-         (status (or (and session (claude-code-ide--session-status session)) "idle"))
-         (reason (and session (claude-code-ide--session-status-reason session))))
-    (if (and reason (not (string-empty-p reason)))
-        (format "%s · %s" status reason)
-      status)))
-
-(defun claude-code-ide--session-status-label (directory)
-  "Return DIRECTORY's run status text propertized with its status face."
-  (let* ((session (claude-code-ide--get-session directory))
-         (status (or (and session (claude-code-ide--session-status session)) "idle"))
-         (face (or (cdr (assoc status claude-code-ide--run-status-faces)) 'shadow)))
-    (propertize (claude-code-ide--session-status-text directory) 'face face)))
-
-(defun claude-code-ide--session-marginalia-annotation (directory)
-  "Marginalia annotation for session DIRECTORY: name, status/reason and age.
-The leading space carries the `marginalia--align' text property so `marginalia'
-aligns the annotation across candidates; column widths are left to `marginalia'.
-The name uses `marginalia-documentation', the status its run-status colour, and
-the age `marginalia-date' (matching how `marginalia' faces file dates)."
-  (let ((name (claude-code-ide--session-display-name directory))
-        (label (claude-code-ide--session-status-label directory))
-        (age (claude-code-ide--format-status-age
-              (claude-code-ide-session-run-status-since directory))))
-    (concat (propertize " " 'marginalia--align t)
-            (propertize name 'face 'marginalia-documentation)
-            "  " label
-            "  " (propertize age 'face 'marginalia-date))))
-
 (defun claude-code-ide--read-session-completing (sessions)
   "Choose a session from SESSIONS with `completing-read'.
 SESSIONS is the sorted alist of (DISPLAY . DIR); returns the chosen DISPLAY
@@ -1794,23 +1756,15 @@ If no Claude windows are visible, show the most recently accessed one."
 
 (provide 'claude-code-ide)
 
-;; Auto-load the `consult' integration whenever `consult' is present, so it
-;; works without extra user configuration.  Placed after `provide' so the
-;; `(require 'claude-code-ide)' at the top of `claude-code-ide-consult' is a
-;; no-op rather than re-entering this file when `consult' is already loaded.
+;; Auto-load the optional `consult' and `marginalia' integrations whenever those
+;; packages are present, so they work without extra user configuration.  Placed
+;; after `provide' so the `(require 'claude-code-ide)' at the top of each
+;; integration is a no-op rather than re-entering this file when the triggering
+;; package is already loaded.
 (with-eval-after-load 'consult
   (require 'claude-code-ide-consult))
 
-;; Register the `marginalia' annotator for the `claude-session' completion
-;; category on the fly whenever `marginalia' is present -- it is the only
-;; source of session annotations, so no opt-in is offered.  This is independent
-;; of `consult': it annotates whichever picker is active (the plain
-;; `completing-read' one or the `consult' upgrade), both of which tag their
-;; candidates with that category.
-(defvar marginalia-annotators)
 (with-eval-after-load 'marginalia
-  (add-to-list 'marginalia-annotators
-               '(claude-session claude-code-ide--session-marginalia-annotation
-                                builtin none)))
+  (require 'claude-code-ide-marginalia))
 
 ;;; claude-code-ide.el ends here

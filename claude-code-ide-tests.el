@@ -2904,19 +2904,85 @@ real command, then restore the mock for the remaining tests."
 
 (ert-deftest claude-code-ide-test-session-marginalia-annotation ()
   "The marginalia annotation carries the align marker and the session columns."
+  (require 'claude-code-ide-marginalia)
   (clrhash claude-code-ide--sessions)
-  (let ((dir "/tmp/ccide-annot-test/"))
+  (let ((dir "/tmp/ccide-annot-test/")
+        ;; Two minutes ago -> a deterministic "2m" age column.
+        (since (time-subtract (current-time) 120)))
     (unwind-protect
         (progn
-          (claude-code-ide-tests--seed-status dir "waiting" nil "permission prompt" "my-sess")
-          (let ((ann (claude-code-ide--session-marginalia-annotation
+          (claude-code-ide-tests--seed-status dir "waiting" since "permission prompt" "my-sess")
+          (let ((ann (claude-code-ide-marginalia--annotate-session
                       (abbreviate-file-name dir))))
             ;; The leading character is the marker marginalia aligns on.
             (should (eq (get-text-property 0 'marginalia--align ann) t))
-            ;; Name, status and reason all appear in the annotation.
+            ;; Name, age, status and reason all appear in the annotation.
             (should (string-match-p "my-sess" ann))
+            (should (string-match-p "2m" ann))
             (should (string-match-p "waiting" ann))
-            (should (string-match-p "permission prompt" ann))))
+            (should (string-match-p "permission prompt" ann))
+            ;; Columns are laid out in order: name, age, status, then reason.
+            (should (< (string-match "my-sess" ann)
+                       (string-match "2m" ann)
+                       (string-match "waiting" ann)
+                       (string-match "permission prompt" ann)))
+            ;; Each column carries its intended face; the status and its reason
+            ;; share the run-status colour ("waiting" -> `error').
+            (should (eq (get-text-property (string-match "my-sess" ann) 'face ann)
+                        'marginalia-documentation))
+            (should (eq (get-text-property (string-match "2m" ann) 'face ann)
+                        'marginalia-date))
+            (should (eq (get-text-property (string-match "waiting" ann) 'face ann)
+                        'error))
+            (should (eq (get-text-property (string-match "permission prompt" ann) 'face ann)
+                        'error))))
+      (clrhash claude-code-ide--sessions))))
+
+(ert-deftest claude-code-ide-test-annotation-column ()
+  "`claude-code-ide-marginalia--column' pads, truncates and faces a column."
+  (require 'claude-code-ide-marginalia)
+  ;; Short text is padded with spaces to the exact width, left-justified.
+  (let ((col (claude-code-ide-marginalia--column "ab" 6 'marginalia-date)))
+    (should (= (string-width col) 6))
+    (should (string-prefix-p "ab" col))
+    ;; The face is applied across the whole padded column.
+    (should (eq (get-text-property 0 'face col) 'marginalia-date)))
+  ;; Overlong text is truncated to the width and ends with an ellipsis.
+  (let ((col (claude-code-ide-marginalia--column "abcdefghij" 5 'marginalia-documentation)))
+    (should (= (string-width col) 5))
+    (should (string-suffix-p "…" col)))
+  ;; A negative width right-justifies: padding goes on the left.
+  (let ((col (claude-code-ide-marginalia--column "ab" -6 'marginalia-date)))
+    (should (= (string-width col) 6))
+    (should (string-prefix-p " " col))
+    (should (string-suffix-p "ab" col))))
+
+(ert-deftest claude-code-ide-test-session-marginalia-annotation-columns-align ()
+  "A long name is truncated so the later columns keep their fixed offset."
+  (require 'claude-code-ide-marginalia)
+  (clrhash claude-code-ide--sessions)
+  (let ((short-dir "/tmp/ccide-annot-short/")
+        (long-dir "/tmp/ccide-annot-long/")
+        (since (time-subtract (current-time) 120)))
+    (unwind-protect
+        (progn
+          (claude-code-ide-tests--seed-status short-dir "idle" since nil "short")
+          (claude-code-ide-tests--seed-status
+           long-dir "idle" since nil
+           "a-very-long-session-name-well-past-the-column-width")
+          (let ((short-ann (claude-code-ide-marginalia--annotate-session
+                            (abbreviate-file-name short-dir)))
+                (long-ann (claude-code-ide-marginalia--annotate-session
+                           (abbreviate-file-name long-dir))))
+            ;; The long name is ellipsis-truncated.
+            (should (string-match-p "…" long-ann))
+            (should-not (string-match-p "…" short-ann))
+            ;; Because the name column has a fixed width, the age and status
+            ;; columns begin at the same offset regardless of name length.
+            (should (= (string-match "2m" short-ann)
+                       (string-match "2m" long-ann)))
+            (should (= (string-match "idle" short-ann)
+                       (string-match "idle" long-ann)))))
       (clrhash claude-code-ide--sessions))))
 
 (ert-deftest claude-code-ide-test-list-sessions-ordering ()
@@ -3068,6 +3134,28 @@ side effects."
                      (setq loaded t)
                    (apply orig-require feature args)))))
       (cl-progv '(consult-buffer-sources) (list nil)
+        (dolist (hook hooks) (funcall hook))))
+    (should loaded)))
+
+(ert-deftest claude-code-ide-test-marginalia-auto-load ()
+  "The `marginalia' after-load hook auto-loads the integration unconditionally.
+Runs the actual form `claude-code-ide' registers in `after-load-alist' (not a
+re-implementation), so removing or mis-wiring the auto-load is caught.  `require'
+is stubbed so the hook can run without `marginalia' installed; `marginalia-annotators'
+is bound (via `cl-progv', since the marginalia file only declares it file-locally
+special) so a co-registered `claude-code-ide-marginalia' annotator hook has no
+lasting side effects."
+  (let ((hooks (cdr (assq 'marginalia after-load-alist)))
+        (orig-require (symbol-function 'require))
+        (loaded nil))
+    ;; The auto-load form must be registered, else the integration never loads.
+    (should hooks)
+    (cl-letf (((symbol-function 'require)
+               (lambda (feature &rest args)
+                 (if (eq feature 'claude-code-ide-marginalia)
+                     (setq loaded t)
+                   (apply orig-require feature args)))))
+      (cl-progv '(marginalia-annotators) (list nil)
         (dolist (hook hooks) (funcall hook))))
     (should loaded)))
 

@@ -507,10 +507,10 @@ cleared automatically when a session exits, even on a crash.
 =M-x claude-code-ide-list-sessions= lists sessions ordered by status (waiting
 first, then idle, then busy); each candidate is the project directory. When
 [[https://github.com/minad/marginalia][=marginalia=]] is loaded, every row is
-annotated with the session's name, its status and any reason (e.g. =waiting ·
-permission prompt=), and how long it has held that status -- =marginalia= is the
-only source of these annotations, so without it the picker shows just the
-directory. The status accessors =claude-code-ide-session-run-status= and
+annotated -- in aligned columns -- with the session's name, how long it has held
+its status, its run status and, when waiting, the reason (e.g. =permission
+prompt=).  =marginalia= is the only source of these annotations, so without it
+the picker shows just the directory. The status accessors =claude-code-ide-session-run-status= and
 =claude-code-ide-session-run-status-since= are public, so you can surface the
 information elsewhere (mode line, tab bar, etc.).
 
