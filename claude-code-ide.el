@@ -372,8 +372,8 @@ write agrees regardless of how the caller spelled the path.")
 
 (defconst claude-code-ide--run-status-faces
   '(("waiting" . error)     ; red   -- needs you, sorted first
-    ("idle"    . shadow)    ; grey
-    ("busy"    . success))  ; green -- working, sorted last
+    ("idle"    . shadow)    ; grey  -- finished, waiting for input
+    ("busy"    . success))  ; green -- actively working, sorted last
   "Known session run statuses, in the order they sort in the session list.
 These mirror the statuses the Claude Code CLI reports in its session files.
 Top = needs attention first.  Each key is the only valid status string and
@@ -1048,8 +1048,8 @@ If `claude-code-ide-focus-on-open' is non-nil, the window is selected."
         (let ((session-id (when-let ((session (claude-code-ide--get-session directory)))
                             (claude-code-ide--session-session-id session))))
           ;; Remove the session entry.  This also drops its run status, so a
-          ;; crash or interrupt that never fired the `Stop' hook can't leave the
-          ;; session stuck reporting `working', and a session later started in
+          ;; crash or interrupt that leaves a stale session file behind can't
+          ;; keep the session reporting `busy', and a session later started in
           ;; the same directory begins fresh.
           (claude-code-ide--remove-session directory)
           ;; Check if this was the last session
@@ -1523,7 +1523,7 @@ If the buffer is already visible, switch focus to it."
 
 (defun claude-code-ide--session-status-label (directory)
   "Return DIRECTORY's run status as a face-propertized label.
-Any waiting reason is merged into the same column, so a blocked session
+Any waiting reason is merged into the same column, so a waiting session
 reads e.g. \"waiting · permission prompt\"."
   (let* ((session (claude-code-ide--get-session directory))
          (status (or (and session (claude-code-ide--session-status session)) "idle"))
@@ -1576,7 +1576,7 @@ live preview.")
 ;;;###autoload
 (defun claude-code-ide-list-sessions ()
   "List all active Claude Code sessions and switch to the selected one.
-Sessions are ordered by run status (blocked first, then idle, then working)
+Sessions are ordered by run status (waiting first, then idle, then busy)
 and annotated with their status and how long they have held it.  The picker
 is `claude-code-ide-session-read-function'; loading `claude-code-ide-consult'
 upgrades it to a `consult'-based one with live preview."

@@ -23,8 +23,8 @@
 ;;; Commentary:
 
 ;; Optional integration that surfaces live Claude Code IDE sessions in
-;; `consult-buffer' (narrow with `c'), ordered by run status (blocked first,
-;; then idle, then working) and -- when `marginalia' is loaded -- annotated
+;; `consult-buffer' (narrow with `c'), ordered by run status (waiting first,
+;; then idle, then busy) and -- when `marginalia' is loaded -- annotated
 ;; with each session's status and how long it has held it.  Previewing a
 ;; candidate shows its Claude Code buffer in the side window.
 ;;
@@ -59,7 +59,7 @@
 
 (defun claude-code-ide-consult--session-dirs ()
   "Return working directories of live Claude Code IDE sessions.
-Ordered by run status (blocked, then idle, then working)."
+Ordered by run status (waiting, then idle, then busy)."
   (claude-code-ide--cleanup-dead-processes)
   (let (dirs)
     (maphash
