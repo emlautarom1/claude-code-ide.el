@@ -56,6 +56,10 @@
 (declare-function ws-send "web-server" (proc msg))
 (declare-function ws-response-header "web-server" (proc code &rest headers))
 
+;; Signaled to report a JSON-RPC level error.  The data is (CODE MESSAGE);
+;; the request handler turns it into a JSON-RPC error response.
+(define-error 'json-rpc-error "JSON-RPC error")
+
 ;;; Server State
 
 (defvar claude-code-ide-mcp-http-server--server nil
@@ -164,6 +168,10 @@ with the appropriate session context."
     (json-parse-error
      (claude-code-ide-mcp-http-server--send-json-error
       request nil -32700 "Parse error"))
+
+    (json-rpc-error
+     (claude-code-ide-mcp-http-server--send-json-error
+      request nil (nth 1 err) (nth 2 err)))
 
     (quit
      (claude-code-ide-debug "Request cancelled by user (C-<escape>)")
