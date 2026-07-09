@@ -55,7 +55,8 @@
 (require 'claude-code-ide-mcp-server)
 
 ;; External declarations
-(defvar claude-code-ide--session-ids)
+(declare-function claude-code-ide--get-session "claude-code-ide" (directory))
+(declare-function claude-code-ide--session-session-id "claude-code-ide" (session))
 (declare-function claude-code-ide-mcp--build-tool-list "claude-code-ide-mcp-handlers" ())
 (declare-function claude-code-ide-mcp--build-tool-schemas "claude-code-ide-mcp-handlers" ())
 (declare-function claude-code-ide-mcp--build-tool-descriptions "claude-code-ide-mcp-handlers" ())
@@ -686,7 +687,8 @@ Optional SESSION contains the MCP session context."
                                         (expand-file-name file-path)))
               (setf (claude-code-ide-mcp-session-last-buffer session) (current-buffer))
               ;; Update MCP tools server's last active buffer
-              (when-let ((session-id (gethash project-dir claude-code-ide--session-ids)))
+              (when-let ((entry (claude-code-ide--get-session project-dir))
+                         (session-id (claude-code-ide--session-session-id entry)))
                 (claude-code-ide-mcp-server-update-last-active-buffer session-id (current-buffer)))))
           (claude-code-ide-debug "Warning: Could not find session for WebSocket connection")))))
 
@@ -945,7 +947,8 @@ the start of the following line."
                                         (expand-file-name file-path)))
               (setf (claude-code-ide-mcp-session-last-buffer session) current-buffer)
               ;; Update MCP tools server's last active buffer
-              (when-let ((session-id (gethash project-dir claude-code-ide--session-ids)))
+              (when-let ((entry (claude-code-ide--get-session project-dir))
+                         (session-id (claude-code-ide--session-session-id entry)))
                 (claude-code-ide-mcp-server-update-last-active-buffer session-id current-buffer)))))))))
 
 ;;; Public API

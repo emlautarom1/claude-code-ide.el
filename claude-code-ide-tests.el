@@ -237,9 +237,9 @@ Ensures MCP lockfile creation does not depend on a writable `~/.claude/ide/'."
        (delete-directory config-dir t))))
 
 (defun claude-code-ide-tests--clear-processes ()
-  "Clear the process hash table for testing.
+  "Clear the session hash table for testing.
 Ensures a clean state before each test that involves process management."
-  (clrhash claude-code-ide--processes)
+  (clrhash claude-code-ide--sessions)
   ;; Also clear MCP sessions
   (when (boundp 'claude-code-ide-mcp--sessions)
     (clrhash claude-code-ide-mcp--sessions)))
@@ -330,19 +330,21 @@ have completed before cleanup.  Waits up to 5 seconds."
                                          :buffer nil))
              (dead-process-name "test-dead"))
         ;; Create a mock dead process
-        (puthash "/dir1" live-process claude-code-ide--processes)
-        (puthash "/dir2" dead-process-name claude-code-ide--processes)
+        (puthash "/dir1" (claude-code-ide--session-create :process live-process)
+                 claude-code-ide--sessions)
+        (puthash "/dir2" (claude-code-ide--session-create :process dead-process-name)
+                 claude-code-ide--sessions)
 
         ;; Before cleanup
-        (should (= (hash-table-count claude-code-ide--processes) 2))
+        (should (= (hash-table-count claude-code-ide--sessions) 2))
 
         ;; Run cleanup
         (claude-code-ide--cleanup-dead-processes)
 
         ;; After cleanup - only live process remains
-        (should (= (hash-table-count claude-code-ide--processes) 1))
-        (should (gethash "/dir1" claude-code-ide--processes))
-        (should (null (gethash "/dir2" claude-code-ide--processes)))
+        (should (= (hash-table-count claude-code-ide--sessions) 1))
+        (should (gethash "/dir1" claude-code-ide--sessions))
+        (should (null (gethash "/dir2" claude-code-ide--sessions)))
 
         ;; Clean up the live process
         (delete-process live-process))
@@ -893,12 +895,14 @@ have completed before cleanup.  Waits up to 5 seconds."
         ;; Test that list-sessions works with no sessions
         (claude-code-ide-list-sessions)
 
-        ;; Manually add mock entries to the process table
-        (puthash "/tmp/project1" (current-buffer) claude-code-ide--processes)
-        (puthash "/tmp/project2" (current-buffer) claude-code-ide--processes)
+        ;; Manually add mock entries to the session table
+        (puthash "/tmp/project1" (claude-code-ide--session-create :process (current-buffer))
+                 claude-code-ide--sessions)
+        (puthash "/tmp/project2" (claude-code-ide--session-create :process (current-buffer))
+                 claude-code-ide--sessions)
 
         ;; Verify we have 2 entries
-        (should (= (hash-table-count claude-code-ide--processes) 2))
+        (should (= (hash-table-count claude-code-ide--sessions) 2))
 
         ;; List sessions should work without error
         (claude-code-ide-list-sessions))
@@ -947,7 +951,7 @@ have completed before cleanup.  Waits up to 5 seconds."
           (claude-code-ide)
           (should (claude-code-ide--get-process dir2)))
         ;; Verify both sessions exist
-        (should (= (hash-table-count claude-code-ide--processes) 2))
+        (should (= (hash-table-count claude-code-ide--sessions) 2))
         ;; Clean up
         (let ((buffers (mapcar (lambda (dir)
                                  (funcall claude-code-ide-buffer-name-function dir))
@@ -2830,7 +2834,7 @@ real command, then restore the mock for the remaining tests."
 
 (ert-deftest claude-code-ide-test-run-status-trailing-slash ()
   "Status writes and reads agree across trailing-slash differences."
-  (clrhash claude-code-ide--run-status-table)
+  (clrhash claude-code-ide--sessions)
   (let ((with-slash "/tmp/ccide-slash-test/")
         (without-slash "/tmp/ccide-slash-test"))
     (unwind-protect
@@ -2845,7 +2849,7 @@ real command, then restore the mock for the remaining tests."
 
 (ert-deftest claude-code-ide-test-set-run-status ()
   "Setting run status validates input and preserves SET-AT across no-ops."
-  (clrhash claude-code-ide--run-status-table)
+  (clrhash claude-code-ide--sessions)
   (let ((dir "/tmp/ccide-status-test/"))
     (unwind-protect
         (progn
@@ -2858,10 +2862,10 @@ real command, then restore the mock for the remaining tests."
           ;; SET-AT is preserved while the status is unchanged, restamped on a
           ;; real transition.  Seed a distinctive old time to test this without
           ;; depending on the clock advancing.
-          (let ((old-time '(20000 0 0 0)))
-            (puthash (claude-code-ide--session-dir-key dir)
-                     (cons "working" old-time)
-                     claude-code-ide--run-status-table)
+          (let ((old-time '(20000 0 0 0))
+                (session (claude-code-ide--ensure-session dir)))
+            (setf (claude-code-ide--session-status session) "working"
+                  (claude-code-ide--session-status-since session) old-time)
             (claude-code-ide--set-run-status dir "working")
             (should (equal (claude-code-ide-session-run-status-since dir) old-time))
             (claude-code-ide--set-run-status dir "idle")
@@ -2869,7 +2873,7 @@ real command, then restore the mock for the remaining tests."
       (claude-code-ide--clear-run-status dir))))
 
 (ert-deftest claude-code-ide-test-clear-run-status ()
-  "Clearing a session's run status removes its table entry."
+  "Clearing a session's run status drops its recorded status."
   (let ((dir "/tmp/ccide-clear-test/"))
     (claude-code-ide--set-run-status dir "blocked")
     (should (claude-code-ide-session-run-status dir))
@@ -2895,20 +2899,19 @@ real command, then restore the mock for the remaining tests."
   "Sweeping dead processes also drops their run status."
   (skip-unless (executable-find "cat"))
   (claude-code-ide-tests--clear-processes)
-  (clrhash claude-code-ide--run-status-table)
   (let* ((dir (expand-file-name "/tmp/ccide-dead-proc/"))
          (proc (make-process :name "ccide-dead-test" :command '("cat") :noquery t)))
     (delete-process proc)            ; now `process-live-p' is nil
-    (puthash dir proc claude-code-ide--processes)
+    (setf (claude-code-ide--session-process (claude-code-ide--ensure-session dir)) proc)
     (claude-code-ide--set-run-status dir "working")
     (should (claude-code-ide-session-run-status dir))
     (claude-code-ide--cleanup-dead-processes)
-    (should-not (gethash dir claude-code-ide--processes))
+    (should-not (claude-code-ide--get-session dir))
     (should-not (claude-code-ide-session-run-status dir))))
 
 (ert-deftest claude-code-ide-test-session-affixation ()
   "The session affixation function prefixes candidates with their status."
-  (clrhash claude-code-ide--run-status-table)
+  (clrhash claude-code-ide--sessions)
   (let* ((dir "/tmp/ccide-affix-test/")
          (display (abbreviate-file-name dir))
          (sessions (list (cons display dir))))
@@ -2924,7 +2927,7 @@ real command, then restore the mock for the remaining tests."
 
 (ert-deftest claude-code-ide-test-list-sessions-ordering ()
   "Session ordering surfaces blocked first, then idle, then working."
-  (clrhash claude-code-ide--run-status-table)
+  (clrhash claude-code-ide--sessions)
   (let* ((b "/tmp/ccide-sess-blocked/")
          (i "/tmp/ccide-sess-idle/")
          (w "/tmp/ccide-sess-working/")
@@ -2949,14 +2952,16 @@ real command, then restore the mock for the remaining tests."
 It calls `claude-code-ide-session-read-function' with the sorted sessions and
 displays the chosen session's buffer -- the seam the consult reader hooks into."
   (claude-code-ide-tests--clear-processes)
-  (let* ((dir "/tmp/ccide-read-fn-test/")
+  ;; No trailing slash: the stored key is canonical, so it matches the display
+  ;; and the buffer name `claude-code-ide-list-sessions' derives from it.
+  (let* ((dir "/tmp/ccide-read-fn-test")
          (display (abbreviate-file-name dir))
          (buffer-name (funcall claude-code-ide-buffer-name-function dir))
          (buffer (get-buffer-create buffer-name))
          received-sessions displayed-buffer)
     (unwind-protect
         (progn
-          (puthash dir buffer claude-code-ide--processes)
+          (setf (claude-code-ide--session-process (claude-code-ide--ensure-session dir)) buffer)
           ;; Record the sessions handed to the reader and choose the first.
           (let ((claude-code-ide-session-read-function
                  (lambda (sessions)
@@ -2978,7 +2983,7 @@ displays the chosen session's buffer -- the seam the consult reader hooks into."
   "The consult annotator marks its leading space for `marginalia' alignment.
 This lets the status column line up across directories of differing width."
   (require 'claude-code-ide-consult)
-  (clrhash claude-code-ide--run-status-table)
+  (clrhash claude-code-ide--sessions)
   (let ((dir "/tmp/ccide-consult-annot/"))
     (unwind-protect
         (progn
@@ -3032,7 +3037,7 @@ side effects."
         (buffer (get-buffer-create "*ccide-status-test*")))
     (unwind-protect
         (progn
-          (clrhash claude-code-ide--run-status-table)
+          (clrhash claude-code-ide--sessions)
           (claude-code-ide-mcp-server-register-session session-id project-dir buffer)
           (let ((claude-code-ide-mcp-server--current-session-id session-id))
             (should (equal (claude-code-ide-mcp-set-session-status "working")
@@ -3048,7 +3053,7 @@ side effects."
                            "No session context available"))))
       (kill-buffer buffer)
       (clrhash claude-code-ide-mcp-server--sessions)
-      (clrhash claude-code-ide--run-status-table))))
+      (clrhash claude-code-ide--sessions))))
 
 (ert-deftest claude-code-ide-emacs-tools-test-eager-registration ()
   "The built-in tools are registered at load, without any setup call."

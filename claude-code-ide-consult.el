@@ -63,10 +63,10 @@ Ordered by run status (blocked, then idle, then working)."
   (claude-code-ide--cleanup-dead-processes)
   (let (dirs)
     (maphash
-     (lambda (directory _process)
+     (lambda (directory _session)
        (when (get-buffer (funcall claude-code-ide-buffer-name-function directory))
          (push (abbreviate-file-name directory) dirs)))
-     claude-code-ide--processes)
+     claude-code-ide--sessions)
     ;; `sort' on a list is stable, so same-status sessions keep their order.
     (sort (nreverse dirs)
           (lambda (a b)
