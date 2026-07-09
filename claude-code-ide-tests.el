@@ -3047,6 +3047,24 @@ side effects."
                                                 (should-not (string-match-p "--settings "
                                                                             (claude-code-ide--build-claude-command))))))))
 
+(ert-deftest claude-code-ide-test-build-command-empty-allowed-tools ()
+  "--allowedTools is omitted when \\='auto resolves to no enabled tools."
+  (cl-letf (((symbol-function 'claude-code-ide-mcp-server-ensure-server)
+             (lambda () t))
+            ((symbol-function 'claude-code-ide-mcp-server-get-config)
+             (lambda (&optional _id)
+               '((mcpServers . ((emacs-tools . ((type . "http")
+                                                (url . "http://localhost:1/mcp"))))))))
+            ;; All tools gated off -> no names.
+            ((symbol-function 'claude-code-ide-mcp-server-get-tool-names)
+             (lambda (&optional _prefix) nil)))
+    (claude-code-ide-tests--with-mocked-cli "claude"
+                                            (let ((claude-code-ide-mcp-allowed-tools 'auto)
+                                                  (claude-code-ide-report-status nil))
+                                              (should-not (string-match-p
+                                                           "--allowedTools"
+                                                           (claude-code-ide--build-claude-command)))))))
+
 (provide 'claude-code-ide-tests)
 
 ;; Local Variables:
