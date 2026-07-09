@@ -92,7 +92,8 @@ To install using =emacs-version= >= 30 and =use-package= with the =vc= binding:
   :vc (:url "https://github.com/manzaltu/claude-code-ide.el" :rev :newest)
   :bind ("C-c C-'" . claude-code-ide-menu) ; Set your favorite keybinding
   :config
-  (claude-code-ide-emacs-tools-setup)) ; Optionally enable Emacs MCP tools
+  (setq claude-code-ide-enable-mcp-server t   ; Optionally expose Emacs MCP tools
+        claude-code-ide-enable-emacs-tools t))
 #+end_src
 
 To install using =use-package= and [[https://github.com/raxod502/straight.el][straight.el]]:
@@ -102,7 +103,8 @@ To install using =use-package= and [[https://github.com/raxod502/straight.el][st
   :straight (:type git :host github :repo "manzaltu/claude-code-ide.el")
   :bind ("C-c C-'" . claude-code-ide-menu) ; Set your favorite keybinding
   :config
-  (claude-code-ide-emacs-tools-setup)) ; Optionally enable Emacs MCP tools
+  (setq claude-code-ide-enable-mcp-server t   ; Optionally expose Emacs MCP tools
+        claude-code-ide-enable-emacs-tools t))
 #+end_src
 
 *** Doom Emacs
@@ -119,7 +121,8 @@ In =config.el=:
 (use-package! claude-code-ide
   :bind ("C-c C-'" . claude-code-ide-menu) ; Set your favorite keybinding
   :config
-  (claude-code-ide-emacs-tools-setup)) ; Optionally enable Emacs MCP tools
+  (setq claude-code-ide-enable-mcp-server t   ; Optionally expose Emacs MCP tools
+        claude-code-ide-enable-emacs-tools t))
 #+end_src
 
 After saving the above, run: =doom sync= in the terminal.
@@ -133,7 +136,6 @@ The easiest way to interact with Claude Code IDE is through the transient menu i
 | Command                                       | Description                                                  |
 |-----------------------------------------------+--------------------------------------------------------------|
 | =M-x claude-code-ide-menu=                    | Open transient menu with all Claude Code commands            |
-| =M-x claude-code-ide-emacs-tools-setup=       | Set up built-in MCP tools (e.g. xref, project)               |
 | =M-x claude-code-ide=                         | Start Claude Code for the current project                    |
 | =M-x claude-code-ide-send-prompt=             | Send a prompt with the region/buffer as context, then submit |
 | =M-x claude-code-ide-continue=                | Continue most recent conversation in directory               |
@@ -210,12 +212,14 @@ This allows you to refine Claude's suggestions before they're applied, ensuring 
 | ~claude-code-ide-switch-tab-on-ediff~           | Switch to Claude's tab when opening ediff    | ~t~                                    |
 | ~claude-code-ide-system-prompt~                 | Custom system prompt to append               | ~nil~                                  |
 | ~claude-code-ide-enable-mcp-server~             | Enable MCP tools server                      | ~nil~                                  |
+| ~claude-code-ide-enable-emacs-tools~            | Expose built-in Emacs nav tools (xref, etc.) | ~nil~                                  |
+| ~claude-code-ide-report-status~                 | Report session run status to Emacs           | ~nil~                                  |
 | ~claude-code-ide-mcp-server-port~               | Port for MCP tools server                    | ~nil~ (auto-select)                    |
 | ~claude-code-ide-mcp-server-tools~              | Alist of exposed Emacs functions             | ~nil~                                  |
 | ~claude-code-ide-diagnostics-backend~           | Diagnostics backend (auto/flycheck/flymake)  | ~'auto~                                |
 | ~claude-code-ide-no-flicker~                    | Enable flicker-free terminal renderer        | ~nil~                                  |
 | ~claude-code-ide-prevent-reflow-glitch~         | Prevent terminal reflow glitch (bug #1422)   | ~t~                                    |
-| ~claude-code-ide-enable-execute-code~           | Allow model to evaluate Elisp in Emacs       | ~t~                                    |
+| ~claude-code-ide-enable-execute-code~           | Allow model to evaluate Elisp in Emacs       | ~nil~                                  |
 | ~claude-code-ide-enable-resources~              | Expose files to Claude as MCP resources      | ~t~                                    |
 | ~claude-code-ide-enable-notifications~          | Notify when Claude finishes and awaits input | ~t~                                    |
 | ~claude-code-ide-notification-function~         | Function called to notify the user           | ~claude-code-ide-default-notification~ |
@@ -351,12 +355,12 @@ Claude Code IDE supports both Flycheck and Flymake for code diagnostics. By defa
 
 *** Elisp Code Execution
 
-Claude Code can evaluate Elisp expressions directly in your running Emacs session via the =executeCode= MCP tool. This is enabled by default.
+Claude Code can evaluate Elisp expressions directly in your running Emacs session via the =executeCode= MCP tool. This is disabled by default.
 
-To disable it:
+To enable it:
 
 #+begin_src emacs-lisp
-(setq claude-code-ide-enable-execute-code nil)
+(setq claude-code-ide-enable-execute-code t)
 #+end_src
 
 *** Custom Buffer Naming
@@ -464,15 +468,17 @@ Claude Code IDE includes built-in MCP tools that expose Emacs functionality to C
 - =treesit-info= - Get tree-sitter syntax tree information for deep code structure analysis
 - =imenu-list-symbols= - List all symbols (functions, classes, variables) in a file using imenu
 - =project-info= - Get information about the current project (directory, files, etc.)
-- =set_session_status= - Report a session's run status (idle/working/blocked) to Emacs (driven by Claude Code hooks; see [[#session-status][Session Status]])
+- =set-session-status= - Report a session's run status (idle/working/blocked) to Emacs (driven by Claude Code hooks; see [[#session-status][Session Status]])
 
 *** Enabling MCP Tools
 
-To enable these tools, add to your configuration:
+The tools are always registered, but only exposed to Claude when the MCP
+tools server and the tools themselves are enabled. Add to your configuration:
 
 #+begin_src emacs-lisp
-;; Set up the built-in Emacs tools
-(claude-code-ide-emacs-tools-setup)
+;; Start the MCP tools server and expose the built-in navigation tools
+(setq claude-code-ide-enable-mcp-server t
+      claude-code-ide-enable-emacs-tools t)
 #+end_src
 
 Once enabled, Claude can use these tools to navigate your codebase. For example:
@@ -495,12 +501,12 @@ glance which sessions need you and which are busy. There are three statuses:
 - =working= - actively processing a prompt or running tools
 - =idle= - finished and waiting for input
 
-This works automatically once the built-in tools are enabled with
-=claude-code-ide-emacs-tools-setup=: the package registers a =set_session_status=
-MCP tool and hands the CLI a small hooks file (shipped with the package) via
-=--settings=, which calls that tool on the relevant lifecycle events. No manual
-hook configuration is required. Status is cleared automatically when a session
-exits, even on a crash.
+This works once the MCP tools server is enabled (=claude-code-ide-enable-mcp-server=)
+and status reporting is turned on (=claude-code-ide-report-status=): the package
+registers a =set-session-status= MCP tool and hands the CLI a small hooks file
+(shipped with the package) via =--settings=, which calls that tool on the
+relevant lifecycle events. No manual hook configuration is required. Status is
+cleared automatically when a session exits, even on a crash.
 
 =M-x claude-code-ide-list-sessions= orders sessions by status (blocked first,
 then idle, then working) and annotates each with its status and how long it has
@@ -508,12 +514,14 @@ held it. The status accessors =claude-code-ide-session-run-status= and
 =claude-code-ide-session-run-status-since= are public, so you can surface the
 information elsewhere (mode line, tab bar, etc.).
 
-To opt out, set =claude-code-ide-report-status= to =nil=; sessions then start
-without the status hooks.
+Status reporting is off by default. To enable it, set
+=claude-code-ide-report-status= to =t= (the MCP tools server must also be
+enabled):
 
 #+begin_src emacs-lisp
-;; Disable status reporting (enabled by default)
-(setq claude-code-ide-report-status nil)
+;; Enable status reporting (off by default)
+(setq claude-code-ide-enable-mcp-server t
+      claude-code-ide-report-status t)
 #+end_src
 
 **** Consult integration (optional)
@@ -578,8 +586,8 @@ Available argument types: =string=, =number=, =integer=, =boolean=, =array=, =ob
           :type string
           :description "Pattern to search for")))
 
-;; Enable Emacs tool MCP server
-(claude-code-ide-emacs-tools-setup)
+;; Enable the MCP tools server so custom tools are exposed to Claude
+(setq claude-code-ide-enable-mcp-server t)
 #+end_src
 
 The =claude-code-ide-mcp-server-with-session-context= macro ensures your tool executes in the correct project context.
