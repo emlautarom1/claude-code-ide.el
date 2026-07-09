@@ -131,13 +131,18 @@ takes no arguments.  Each plist in ARGS should have the following keys:
 
 CATEGORY: A string indicating a category for the tool (optional).
 
+ENABLED: A zero-argument predicate function controlling whether the tool
+is advertised to and callable by Claude.  It is evaluated lazily on each
+request.  When omitted, the tool is always enabled.
+
 The tool is automatically added to `claude-code-ide-mcp-server-tools'.
 Returns the tool specification for convenience."
   (let ((function (plist-get slots :function))
         (name (plist-get slots :name))
         (description (plist-get slots :description))
         (args (plist-get slots :args))
-        (category (plist-get slots :category)))
+        (category (plist-get slots :category))
+        (enabled (plist-get slots :enabled)))
     ;; Validate required parameters
     (unless function
       (error "Tool :function is required"))
@@ -154,6 +159,8 @@ Returns the tool specification for convenience."
         (setq spec (plist-put spec :args args)))
       (when category
         (setq spec (plist-put spec :category category)))
+      (when enabled
+        (setq spec (plist-put spec :enabled enabled)))
       ;; Add to the tools list
       (add-to-list 'claude-code-ide-mcp-server-tools spec)
       ;; Return the spec for convenience
@@ -216,8 +223,15 @@ Returns an alist suitable for JSON encoding."
                      (url . ,url))))
       `((mcpServers . ((emacs-tools . ,config)))))))
 
+(defun claude-code-ide-mcp-server--tool-enabled-p (tool-spec)
+  "Return non-nil when TOOL-SPEC should be advertised to and callable by Claude.
+A spec without an `:enabled' predicate is always enabled; otherwise the
+predicate (a zero-argument function) is called at request time."
+  (let ((pred (plist-get tool-spec :enabled)))
+    (or (null pred) (funcall pred))))
+
 (defun claude-code-ide-mcp-server-get-tool-names (&optional prefix)
-  "Get a list of all registered MCP tool names.
+  "Get a list of all enabled MCP tool names.
 If PREFIX is provided, prepend it to each tool name.
 This is useful for generating --allowedTools lists."
   (mapcar (lambda (tool-spec)
@@ -225,7 +239,8 @@ This is useful for generating --allowedTools lists."
               (if prefix
                   (concat prefix tool-name)
                 tool-name)))
-          claude-code-ide-mcp-server-tools))
+          (cl-remove-if-not #'claude-code-ide-mcp-server--tool-enabled-p
+                            claude-code-ide-mcp-server-tools)))
 
 ;;; Session Management Functions
 
