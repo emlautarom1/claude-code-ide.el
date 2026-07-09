@@ -67,7 +67,7 @@ If nil, a random available port will be selected automatically."
   "List of Emacs functions to advertise via the MCP tools server.
 Each entry is a plist as produced by `claude-code-ide-make-tool', with:
   :function - The function (symbol or lambda) that runs the tool
-  :name - The tool name (string, recommended snake_case)
+  :name - The tool name (string, recommended kebab-case)
   :description - Human-readable description of the tool
   :args - List of argument specifications, each a plist with:
     :name - Argument name (string)
@@ -112,7 +112,7 @@ This is dynamically bound during tool execution.")
 
 The following keyword arguments are available:
 
-NAME: The name of the tool, recommended to be in snake_case.
+NAME: The name of the tool, recommended to be in kebab-case.
 
 FUNCTION: The function itself (lambda or symbol) that runs the tool.
 

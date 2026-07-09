@@ -215,7 +215,7 @@ This allows you to refine Claude's suggestions before they're applied, ensuring 
 | ~claude-code-ide-enable-emacs-tools~            | Advertise built-in Emacs nav tools (xref…)   | ~nil~                                  |
 | ~claude-code-ide-report-status~                 | Report session run status through Claude hooks | ~nil~                                |
 | ~claude-code-ide-mcp-server-port~               | Port for MCP tools server                    | ~nil~ (auto-select)                    |
-| ~claude-code-ide-mcp-server-tools~              | Alist of advertised Emacs functions          | ~nil~                                  |
+| ~claude-code-ide-mcp-server-tools~              | List of advertised Emacs functions           | ~nil~                                  |
 | ~claude-code-ide-diagnostics-backend~           | Diagnostics backend (auto/flycheck/flymake)  | ~'auto~                                |
 | ~claude-code-ide-no-flicker~                    | Enable flicker-free terminal renderer        | ~nil~                                  |
 | ~claude-code-ide-prevent-reflow-glitch~         | Prevent terminal reflow glitch (bug #1422)   | ~t~                                    |
@@ -550,7 +550,7 @@ Define tools using the =claude-code-ide-make-tool= function:
 #+begin_src emacs-lisp
 (claude-code-ide-make-tool
  :function #'function-name     ; The Emacs function to call
- :name "tool_name"             ; Name for Claude to use (snake_case recommended)
+ :name "tool-name"             ; Name for Claude to use (kebab-case recommended)
  :description "..."            ; Human-readable description
  :args '((:name "param1"       ; List of argument specifications
           :type string         ; Type: string, number, integer, boolean, etc.
@@ -576,7 +576,7 @@ Available argument types: =string=, =number=, =integer=, =boolean=, =array=, =ob
 ;; Define and register the tool (automatically added to claude-code-ide-mcp-server-tools)
 (claude-code-ide-make-tool
  :function #'my-project-grep
- :name "my_project_grep"
+ :name "my-project-grep"
  :description "Search for pattern in project files"
  :args '((:name "pattern"
           :type string
