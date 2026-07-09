@@ -46,10 +46,6 @@
 ;; demand even if the tool fires before the main package has been loaded.
 (declare-function claude-code-ide--set-run-status "claude-code-ide" (directory status))
 
-;; Defined in claude-code-ide.el (loaded after this file); referenced lazily by
-;; the status tool's advertisement predicate.
-(defvar claude-code-ide-report-status)
-
 ;;; Customization
 
 (defcustom claude-code-ide-enable-emacs-tools nil
@@ -57,13 +53,22 @@
   :type 'boolean
   :group 'claude-code-ide-mcp-server)
 
+(defcustom claude-code-ide-report-status nil
+  "Whether sessions report their run status (idle/working/blocked) to Emacs.
+When non-nil and the MCP tools server is enabled, the package hands the
+CLI a small hooks settings file (see `claude-code-ide--status-hooks-file')
+via --settings so it calls the `set-session-status' MCP tool on lifecycle
+events.  The status is shown in `claude-code-ide-list-sessions'."
+  :type 'boolean
+  :group 'claude-code-ide)
+
 (defun claude-code-ide-emacs-tools--nav-enabled-p ()
   "Return non-nil when the built-in navigation tools should be advertised."
-  (bound-and-true-p claude-code-ide-enable-emacs-tools))
+  claude-code-ide-enable-emacs-tools)
 
 (defun claude-code-ide-emacs-tools--status-enabled-p ()
   "Return non-nil when the session-status tool should be advertised."
-  (bound-and-true-p claude-code-ide-report-status))
+  claude-code-ide-report-status)
 
 ;;; Tool Functions
 

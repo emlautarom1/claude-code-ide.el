@@ -153,15 +153,6 @@ This should be a string of space-separated flags, e.g. \"--model opus\"."
   :type 'string
   :group 'claude-code-ide)
 
-(defcustom claude-code-ide-report-status nil
-  "Whether sessions report their run status (idle/working/blocked) to Emacs.
-When non-nil and the MCP tools server is enabled, the package hands the
-CLI a small hooks settings file (see `claude-code-ide--status-hooks-file')
-via --settings so it calls the `set-session-status' MCP tool on lifecycle
-events.  The status is shown in `claude-code-ide-list-sessions'."
-  :type 'boolean
-  :group 'claude-code-ide)
-
 (defcustom claude-code-ide-consult-integration t
   "Whether to auto-enable the optional `consult' integration when available.
 When non-nil and `consult' is loaded, `claude-code-ide' automatically loads
