@@ -56,6 +56,10 @@
 (declare-function ws-send "web-server" (proc msg))
 (declare-function ws-response-header "web-server" (proc code &rest headers))
 
+;; Signaled to report a JSON-RPC level error.  The data is (CODE MESSAGE);
+;; the request handler turns it into a JSON-RPC error response.
+(define-error 'claude-code-ide-mcp-json-rpc-error "JSON-RPC error")
+
 ;;; Server State
 
 (defvar claude-code-ide-mcp-http-server--server nil
@@ -129,52 +133,60 @@ Returns a cons cell of (server . port)."
 Extracts session ID from the URL path and processes the request
 with the appropriate session context."
   (claude-code-ide-debug "MCP server received POST request")
-  (condition-case err
-      (let* ((headers (ws-headers request))
-             (body (ws-body request))
-             ;; Extract session ID from URL path
-             (url-session-id (claude-code-ide-mcp-http-server--extract-session-id-from-path headers))
-             (json-object (json-parse-string body :object-type 'alist))
-             (method (alist-get 'method json-object))
-             (params (alist-get 'params json-object))
-             (id (alist-get 'id json-object)))
+  ;; Bind ID in an outer LET so the error handlers can echo it back.  It stays
+  ;; nil until the request is parsed, matching the JSON-RPC rule that parse and
+  ;; invalid-request errors report a null id.
+  (let ((id nil))
+    (condition-case err
+        (let* ((headers (ws-headers request))
+               (body (ws-body request))
+               ;; Extract session ID from URL path
+               (url-session-id (claude-code-ide-mcp-http-server--extract-session-id-from-path headers))
+               (json-object (json-parse-string body :object-type 'alist))
+               (method (alist-get 'method json-object))
+               (params (alist-get 'params json-object)))
+          (setq id (alist-get 'id json-object))
 
-        (claude-code-ide-debug "MCP request - method: %s, id: %s, session-id: %s"
-                               method id url-session-id)
+          (claude-code-ide-debug "MCP request - method: %s, id: %s, session-id: %s"
+                                 method id url-session-id)
 
-        ;; Check if this is a notification (no id field)
-        (if (null id)
-            ;; Notifications don't require a response
-            (progn
-              (claude-code-ide-debug "Received notification: %s" method)
-              ;; Still close the connection for HTTP transport
-              (claude-code-ide-mcp-http-server--send-empty-response request))
-          ;; Process the request with session context
-          (let* ((claude-code-ide-mcp-server--current-session-id url-session-id)
-                 (result (claude-code-ide-mcp-http-server--dispatch method params)))
-            (claude-code-ide-debug "MCP response result computed")
-            ;; Send response
-            (claude-code-ide-mcp-http-server--send-json-response
-             request 200
-             `((jsonrpc . "2.0")
-               (id . ,id)
-               (result . ,result)))
-            (claude-code-ide-debug "MCP response sent"))))
+          ;; Check if this is a notification (no id field)
+          (if (null id)
+              ;; Notifications don't require a response
+              (progn
+                (claude-code-ide-debug "Received notification: %s" method)
+                ;; Still close the connection for HTTP transport
+                (claude-code-ide-mcp-http-server--send-empty-response request))
+            ;; Process the request with session context
+            (let* ((claude-code-ide-mcp-server--current-session-id url-session-id)
+                   (result (claude-code-ide-mcp-http-server--dispatch method params)))
+              (claude-code-ide-debug "MCP response result computed")
+              ;; Send response
+              (claude-code-ide-mcp-http-server--send-json-response
+               request 200
+               `((jsonrpc . "2.0")
+                 (id . ,id)
+                 (result . ,result)))
+              (claude-code-ide-debug "MCP response sent"))))
 
-    (json-parse-error
-     (claude-code-ide-mcp-http-server--send-json-error
-      request nil -32700 "Parse error"))
+      (json-parse-error
+       (claude-code-ide-mcp-http-server--send-json-error
+        request nil -32700 "Parse error"))
 
-    (quit
-     (claude-code-ide-debug "Request cancelled by user (C-<escape>)")
-     (claude-code-ide-mcp-http-server--send-json-error
-      request nil -32001 "Operation cancelled by user"))
+      (claude-code-ide-mcp-json-rpc-error
+       (claude-code-ide-mcp-http-server--send-json-error
+        request id (nth 1 err) (nth 2 err)))
 
-    (error
-     (claude-code-ide-debug "Error handling request: %s"
-                            (error-message-string err))
-     (claude-code-ide-mcp-http-server--send-json-error
-      request nil -32603 (format "Internal error: %s" (error-message-string err))))))
+      (quit
+       (claude-code-ide-debug "Request cancelled by user (C-<escape>)")
+       (claude-code-ide-mcp-http-server--send-json-error
+        request id -32001 "Operation cancelled by user"))
+
+      (error
+       (claude-code-ide-debug "Error handling request: %s"
+                              (error-message-string err))
+       (claude-code-ide-mcp-http-server--send-json-error
+        request id -32603 (format "Internal error: %s" (error-message-string err)))))))
 
 ;;; MCP Protocol Implementation
 
@@ -190,7 +202,7 @@ PARAMS is the parameters alist."
     ("tools/call"
      (claude-code-ide-mcp-http-server--handle-tools-call params))
     (_
-     (signal 'json-rpc-error (list -32601 "Method not found")))))
+     (signal 'claude-code-ide-mcp-json-rpc-error (list -32601 "Method not found")))))
 
 (defun claude-code-ide-mcp-http-server--handle-initialize (_params)
   "Handle the initialize method."
@@ -203,7 +215,9 @@ PARAMS is the parameters alist."
 (defun claude-code-ide-mcp-http-server--handle-tools-list (_params)
   "Handle the tools/list method."
   (let ((tools (mapcar #'claude-code-ide-mcp-http-server--tool-to-mcp
-                       claude-code-ide-mcp-server-tools)))
+                       (cl-remove-if-not
+                        #'claude-code-ide-mcp-server--tool-enabled-p
+                        claude-code-ide-mcp-server-tools))))
     (claude-code-ide-debug "MCP server returning %d tools" (length tools))
     (dolist (tool tools)
       (claude-code-ide-debug "  Tool: %s" (alist-get 'name tool)))
@@ -219,8 +233,9 @@ PARAMS is the parameters alist."
                        (string= (plist-get spec :name) tool-name))
                      claude-code-ide-mcp-server-tools)))
 
-    (unless tool-spec
-      (signal 'json-rpc-error (list -32602 (format "Unknown tool: %s" tool-name))))
+    (unless (and tool-spec
+                 (claude-code-ide-mcp-server--tool-enabled-p tool-spec))
+      (signal 'claude-code-ide-mcp-json-rpc-error (list -32602 (format "Unknown tool: %s" tool-name))))
 
     ;; Extract function and args from the tool spec
     (let* ((tool-function (plist-get tool-spec :function))
@@ -291,7 +306,7 @@ Returns a list of arguments in the correct order."
              (optional (plist-get spec :optional))
              (value (alist-get (intern name) args)))
         (when (and (not optional) (not value))
-          (signal 'json-rpc-error
+          (signal 'claude-code-ide-mcp-json-rpc-error
                   (list -32602 (format "Missing required argument: %s" name))))
         (push value result)))))
 

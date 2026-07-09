@@ -56,8 +56,10 @@
 ;; M-x claude-code-ide-fix-error-at-point - Ask Claude to fix the diagnostic at point
 ;;
 ;; Emacs MCP Tools:
-;; To enable Emacs tools for Claude, add to your config:
-;;   (claude-code-ide-emacs-tools-setup)
+;; To advertise the built-in Emacs navigation tools to Claude, enable the
+;; MCP server and the Emacs tools in your config:
+;;   (setq claude-code-ide-enable-mcp-server t)   ; Enable the MCP server
+;;   (setq claude-code-ide-enable-emacs-tools t)  ; Enable the Emacs tools
 
 ;;; Code:
 
@@ -124,7 +126,7 @@ session-status hooks) can be located regardless of the install method.")
 (defconst claude-code-ide--status-hooks-file
   (expand-file-name "claude-code-ide-hooks.json" claude-code-ide--package-directory)
   "Absolute path to the Claude Code hooks settings shipped with the package.
-These hooks call the `set_session_status' MCP tool on session lifecycle
+These hooks call the `set-session-status' MCP tool on session lifecycle
 events.  Passed to the CLI via --settings when `claude-code-ide-report-status'
 is non-nil.")
 
@@ -149,15 +151,6 @@ and should return a string to use as the buffer name."
   "Additional flags to pass to the Claude Code CLI.
 This should be a string of space-separated flags, e.g. \"--model opus\"."
   :type 'string
-  :group 'claude-code-ide)
-
-(defcustom claude-code-ide-report-status t
-  "Whether sessions report their run status (idle/working/blocked) to Emacs.
-When non-nil and the MCP tools server is enabled, the package hands the
-CLI a small hooks settings file (see `claude-code-ide--status-hooks-file')
-via --settings so it calls the `set_session_status' MCP tool on lifecycle
-events.  The status is shown in `claude-code-ide-list-sessions'."
-  :type 'boolean
   :group 'claude-code-ide)
 
 (defcustom claude-code-ide-consult-integration t
@@ -234,10 +227,10 @@ diff comparison."
   :type 'boolean
   :group 'claude-code-ide)
 
-(defcustom claude-code-ide-enable-execute-code t
-  "Whether to expose the executeCode tool to the model.
+(defcustom claude-code-ide-enable-execute-code nil
+  "Whether to advertise the executeCode tool to the model.
 When non-nil, Claude Code can evaluate Elisp expressions in Emacs
-via the executeCode MCP tool.  Set to nil to hide the tool entirely."
+via the executeCode MCP tool.  Nil (the default) hides the tool entirely."
   :type 'boolean
   :group 'claude-code-ide)
 
@@ -1071,10 +1064,10 @@ Additional flags from `claude-code-ide-cli-extra-flags' are also included."
                    (mapconcat 'identity claude-code-ide-mcp-allowed-tools " "))
                   ;; String pattern or nil
                   (t claude-code-ide-mcp-allowed-tools))))
-            (when allowed-tools
+            (when (and allowed-tools (not (string-empty-p allowed-tools)))
               (setq claude-cmd (concat claude-cmd " --allowedTools " allowed-tools))))
           ;; Hand the CLI our session-status hooks (which call the
-          ;; `set_session_status' tool on the emacs-tools server configured
+          ;; `set-session-status' tool on the emacs-tools server configured
           ;; above) so it reports run status to Emacs without the user having
           ;; to wire hooks into their own settings.
           (when (and claude-code-ide-report-status

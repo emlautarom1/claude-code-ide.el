@@ -2440,8 +2440,7 @@ have completed before cleanup.  Waits up to 5 seconds."
   (require 'claude-code-ide-emacs-tools)
   (require 'claude-code-ide-mcp-server)
 
-  ;; Setup tools first
-  (claude-code-ide-emacs-tools-setup)
+  ;; Tools are registered eagerly at load.
 
   ;; Find the imenu tool in the registered tools
   (let ((imenu-tool (cl-find-if
@@ -2907,12 +2906,12 @@ side effects."
         (should (eq loaded (cdr case)))))))
 
 (ert-deftest claude-code-ide-test-set-session-status-tool ()
-  "The set_session_status MCP tool records status keyed by the session dir."
+  "The set-session-status MCP tool records status keyed by the session dir."
   (require 'claude-code-ide-emacs-tools)
   (require 'claude-code-ide-mcp-server)
-  ;; Registered by setup.
-  (claude-code-ide-emacs-tools-setup)
-  (should (member "set_session_status" (claude-code-ide-mcp-server-get-tool-names)))
+  ;; Registered eagerly at load; advertised only when reporting is enabled.
+  (let ((claude-code-ide-report-status t))
+    (should (member "set-session-status" (claude-code-ide-mcp-server-get-tool-names))))
   (let ((session-id "ccide-status-session")
         (project-dir "/tmp/ccide-tool-status-test/")
         (buffer (get-buffer-create "*ccide-status-test*")))
@@ -2935,6 +2934,82 @@ side effects."
       (kill-buffer buffer)
       (clrhash claude-code-ide-mcp-server--sessions)
       (clrhash claude-code-ide--run-status-table))))
+
+(ert-deftest claude-code-ide-emacs-tools-test-eager-registration ()
+  "The built-in tools are registered at load, without any setup call."
+  (require 'claude-code-ide-emacs-tools)
+  (require 'claude-code-ide-mcp-server)
+  (dolist (fn '(claude-code-ide-mcp-xref-find-references
+                claude-code-ide-mcp-xref-find-apropos
+                claude-code-ide-mcp-project-info
+                claude-code-ide-mcp-imenu-list-symbols
+                claude-code-ide-mcp-treesit-info
+                claude-code-ide-mcp-set-session-status))
+    (should (cl-find-if (lambda (spec) (eq (plist-get spec :function) fn))
+                        claude-code-ide-mcp-server-tools))))
+
+(ert-deftest claude-code-ide-emacs-tools-test-nav-advertisement-gating ()
+  "Navigation tools are advertised only when enable-emacs-tools is non-nil."
+  (require 'claude-code-ide-emacs-tools)
+  (require 'claude-code-ide-mcp-server)
+  (let ((claude-code-ide-enable-emacs-tools t))
+    (should (member "claude-code-ide-mcp-xref-find-references"
+                    (claude-code-ide-mcp-server-get-tool-names))))
+  (let ((claude-code-ide-enable-emacs-tools nil))
+    (should-not (member "claude-code-ide-mcp-xref-find-references"
+                        (claude-code-ide-mcp-server-get-tool-names)))))
+
+(ert-deftest claude-code-ide-emacs-tools-test-status-advertisement-gating ()
+  "The status tool is advertised only when report-status is non-nil."
+  (require 'claude-code-ide-emacs-tools)
+  (require 'claude-code-ide-mcp-server)
+  (let ((claude-code-ide-report-status t))
+    (should (member "set-session-status"
+                    (claude-code-ide-mcp-server-get-tool-names))))
+  (let ((claude-code-ide-report-status nil))
+    (should-not (member "set-session-status"
+                        (claude-code-ide-mcp-server-get-tool-names)))))
+
+(ert-deftest claude-code-ide-emacs-tools-test-dispatch-gating ()
+  "A gated-off tool is not callable via tools/call (strict gating)."
+  (require 'claude-code-ide-emacs-tools)
+  (require 'claude-code-ide-mcp-server)
+  (require 'claude-code-ide-mcp-http-server)
+  ;; Disabled -> the tool is rejected as unknown.
+  (let ((claude-code-ide-report-status nil))
+    (should-error (claude-code-ide-mcp-http-server--handle-tools-call
+                   '((name . "set-session-status")))
+                  :type 'claude-code-ide-mcp-json-rpc-error))
+  ;; Enabled -> the call is dispatched (no Unknown tool error).
+  (let ((claude-code-ide-report-status t)
+        (claude-code-ide-mcp-server--current-session-id nil))
+    (should (claude-code-ide-mcp-http-server--handle-tools-call
+             '((name . "set-session-status")
+               (arguments . ((status . "idle"))))))))
+
+(ert-deftest claude-code-ide-test-status-hooks-tool-matches-registration ()
+  "Every mcp_tool hook in the shipped file names the registered status tool."
+  (require 'json)
+  (require 'claude-code-ide-emacs-tools)
+  (require 'claude-code-ide-mcp-server)
+  (let* ((registered (cl-find-if
+                      (lambda (spec)
+                        (eq (plist-get spec :function)
+                            'claude-code-ide-mcp-set-session-status))
+                      claude-code-ide-mcp-server-tools))
+         (tool-name (plist-get registered :name))
+         (data (json-read-file claude-code-ide--status-hooks-file))
+         (hooks (cdr (assq 'hooks data)))
+         (seen 0))
+    (should (equal tool-name "set-session-status"))
+    (dolist (event hooks)
+      (dolist (group (append (cdr event) nil))
+        (dolist (h (append (cdr (assq 'hooks group)) nil))
+          (when (equal (cdr (assq 'type h)) "mcp_tool")
+            (setq seen (1+ seen))
+            (should (equal (cdr (assq 'tool h)) tool-name))))))
+    ;; All four lifecycle events are wired.
+    (should (= seen 4))))
 
 (ert-deftest claude-code-ide-test-status-hooks-file ()
   "The shipped hooks file exists and is valid JSON wiring the status tool."
@@ -2971,6 +3046,46 @@ side effects."
                                               (let ((claude-code-ide-report-status nil))
                                                 (should-not (string-match-p "--settings "
                                                                             (claude-code-ide--build-claude-command))))))))
+
+(ert-deftest claude-code-ide-test-build-command-empty-allowed-tools ()
+  "--allowedTools is omitted when \\='auto resolves to no enabled tools."
+  (cl-letf (((symbol-function 'claude-code-ide-mcp-server-ensure-server)
+             (lambda () t))
+            ((symbol-function 'claude-code-ide-mcp-server-get-config)
+             (lambda (&optional _id)
+               '((mcpServers . ((emacs-tools . ((type . "http")
+                                                (url . "http://localhost:1/mcp"))))))))
+            ;; All tools gated off -> no names.
+            ((symbol-function 'claude-code-ide-mcp-server-get-tool-names)
+             (lambda (&optional _prefix) nil)))
+    (claude-code-ide-tests--with-mocked-cli "claude"
+                                            (let ((claude-code-ide-mcp-allowed-tools 'auto)
+                                                  (claude-code-ide-report-status nil))
+                                              (should-not (string-match-p
+                                                           "--allowedTools"
+                                                           (claude-code-ide--build-claude-command)))))))
+
+(ert-deftest claude-code-ide-test-handle-post-error-echoes-id ()
+  "Error responses echo the request id, except parse errors (null id)."
+  (require 'claude-code-ide-mcp-http-server)
+  (let ((captured 'unset))
+    (cl-letf (((symbol-function 'ws-headers) (lambda (_r) nil))
+              ((symbol-function 'claude-code-ide-mcp-http-server--extract-session-id-from-path)
+               (lambda (_h) nil))
+              ((symbol-function 'claude-code-ide-mcp-http-server--send-json-response)
+               (lambda (&rest _) nil))
+              ((symbol-function 'claude-code-ide-mcp-http-server--send-json-error)
+               (lambda (_req id _code _msg) (setq captured id))))
+      ;; Unknown method -> claude-code-ide-mcp-json-rpc-error must echo the request id.
+      (cl-letf (((symbol-function 'ws-body)
+                 (lambda (_r) "{\"jsonrpc\":\"2.0\",\"id\":42,\"method\":\"nonexistent\"}")))
+        (claude-code-ide-mcp-http-server--handle-post 'req)
+        (should (equal captured 42)))
+      ;; Malformed body -> parse error must report a null id.
+      (setq captured 'unset)
+      (cl-letf (((symbol-function 'ws-body) (lambda (_r) "not json")))
+        (claude-code-ide-mcp-http-server--handle-post 'req)
+        (should (null captured))))))
 
 (provide 'claude-code-ide-tests)
 

@@ -22,7 +22,7 @@
 
 ;;; Commentary:
 
-;; This module provides an MCP tools server that exposes Emacs functions
+;; This module provides an MCP tools server that advertises Emacs functions
 ;; to Claude Code.  Unlike the IDE MCP server (which uses WebSocket),
 ;; this uses HTTP/Streamable HTTP transport and provides access to
 ;; general Emacs functionality like xref, project navigation, etc.
@@ -64,10 +64,10 @@ If nil, a random available port will be selected automatically."
   :group 'claude-code-ide-mcp-server)
 
 (defcustom claude-code-ide-mcp-server-tools nil
-  "List of Emacs functions to expose via the MCP tools server.
+  "List of Emacs functions to advertise via the MCP tools server.
 Each entry is a plist as produced by `claude-code-ide-make-tool', with:
   :function - The function (symbol or lambda) that runs the tool
-  :name - The tool name (string, recommended snake_case)
+  :name - The tool name (string, recommended kebab-case)
   :description - Human-readable description of the tool
   :args - List of argument specifications, each a plist with:
     :name - Argument name (string)
@@ -112,7 +112,7 @@ This is dynamically bound during tool execution.")
 
 The following keyword arguments are available:
 
-NAME: The name of the tool, recommended to be in snake_case.
+NAME: The name of the tool, recommended to be in kebab-case.
 
 FUNCTION: The function itself (lambda or symbol) that runs the tool.
 
@@ -131,13 +131,18 @@ takes no arguments.  Each plist in ARGS should have the following keys:
 
 CATEGORY: A string indicating a category for the tool (optional).
 
+ENABLED: A zero-argument predicate function controlling whether the tool
+is advertised to and callable by Claude.  It is evaluated lazily on each
+request.  When omitted, the tool is always enabled.
+
 The tool is automatically added to `claude-code-ide-mcp-server-tools'.
 Returns the tool specification for convenience."
   (let ((function (plist-get slots :function))
         (name (plist-get slots :name))
         (description (plist-get slots :description))
         (args (plist-get slots :args))
-        (category (plist-get slots :category)))
+        (category (plist-get slots :category))
+        (enabled (plist-get slots :enabled)))
     ;; Validate required parameters
     (unless function
       (error "Tool :function is required"))
@@ -154,6 +159,8 @@ Returns the tool specification for convenience."
         (setq spec (plist-put spec :args args)))
       (when category
         (setq spec (plist-put spec :category category)))
+      (when enabled
+        (setq spec (plist-put spec :enabled enabled)))
       ;; Add to the tools list
       (add-to-list 'claude-code-ide-mcp-server-tools spec)
       ;; Return the spec for convenience
@@ -216,8 +223,15 @@ Returns an alist suitable for JSON encoding."
                      (url . ,url))))
       `((mcpServers . ((emacs-tools . ,config)))))))
 
+(defun claude-code-ide-mcp-server--tool-enabled-p (tool-spec)
+  "Return non-nil when TOOL-SPEC should be advertised to and callable by Claude.
+A spec without an `:enabled' predicate is always enabled; otherwise the
+predicate (a zero-argument function) is called at request time."
+  (let ((pred (plist-get tool-spec :enabled)))
+    (or (null pred) (funcall pred))))
+
 (defun claude-code-ide-mcp-server-get-tool-names (&optional prefix)
-  "Get a list of all registered MCP tool names.
+  "Get a list of all enabled MCP tool names.
 If PREFIX is provided, prepend it to each tool name.
 This is useful for generating --allowedTools lists."
   (mapcar (lambda (tool-spec)
@@ -225,7 +239,8 @@ This is useful for generating --allowedTools lists."
               (if prefix
                   (concat prefix tool-name)
                 tool-name)))
-          claude-code-ide-mcp-server-tools))
+          (cl-remove-if-not #'claude-code-ide-mcp-server--tool-enabled-p
+                            claude-code-ide-mcp-server-tools)))
 
 ;;; Session Management Functions
 

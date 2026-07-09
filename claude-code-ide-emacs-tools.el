@@ -23,7 +23,7 @@
 ;;; Commentary:
 
 ;; This file provides Emacs-specific MCP tools for Claude Code IDE.
-;; These tools expose Emacs functionality such as xref (cross-references)
+;; These tools advertise Emacs functionality such as xref (cross-references)
 ;; and project information to Claude, enabling AI-assisted code navigation
 ;; and understanding within the correct project context.
 
@@ -45,6 +45,30 @@
 ;; carries an autoload cookie, so a call to it pulls in claude-code-ide on
 ;; demand even if the tool fires before the main package has been loaded.
 (declare-function claude-code-ide--set-run-status "claude-code-ide" (directory status))
+
+;;; Customization
+
+(defcustom claude-code-ide-enable-emacs-tools nil
+  "Whether the built-in Emacs navigation MCP tools are advertised to Claude."
+  :type 'boolean
+  :group 'claude-code-ide-mcp-server)
+
+(defcustom claude-code-ide-report-status nil
+  "Whether sessions report their run status (idle/working/blocked) to Emacs.
+When non-nil and the MCP tools server is enabled, the package hands the
+CLI a small hooks settings file (see `claude-code-ide--status-hooks-file')
+via --settings so it calls the `set-session-status' MCP tool on lifecycle
+events.  The status is shown in `claude-code-ide-list-sessions'."
+  :type 'boolean
+  :group 'claude-code-ide)
+
+(defun claude-code-ide-emacs-tools--nav-enabled-p ()
+  "Return non-nil when the built-in navigation tools should be advertised."
+  claude-code-ide-enable-emacs-tools)
+
+(defun claude-code-ide-emacs-tools--status-enabled-p ()
+  "Return non-nil when the session-status tool should be advertised."
+  claude-code-ide-report-status)
 
 ;;; Tool Functions
 
@@ -352,95 +376,94 @@ Intended to be called by Claude Code hooks, not interactively."
                (format "status: %s" status))
       "No session context available")))
 
-;;; Tool Configuration
-
 ;;; Tool Registration
 
+;; Each tool's `:enabled' predicate controls whether it is advertised to
+;; Claude: navigation tools follow `claude-code-ide-enable-emacs-tools',
+;; the status tool follows `claude-code-ide-report-status'.
 
-;;; Setup Function
+;; Register xref tools
+(claude-code-ide-make-tool
+ :function #'claude-code-ide-mcp-xref-find-references
+ :name "claude-code-ide-mcp-xref-find-references"
+ :description "Find where a function, variable, or class is used throughout your codebase. Perfect for understanding code dependencies and impact analysis"
+ :enabled #'claude-code-ide-emacs-tools--nav-enabled-p
+ :args '((:name "identifier"
+                :type string
+                :description "The identifier to find references for")
+         (:name "file_path"
+                :type string
+                :description "File path to use as context for the search")))
 
-;;;###autoload
-(defun claude-code-ide-emacs-tools-setup ()
-  "Set up Emacs MCP tools for Claude Code IDE."
-  (interactive)
-  (setq claude-code-ide-enable-mcp-server t)
+(claude-code-ide-make-tool
+ :function #'claude-code-ide-mcp-xref-find-apropos
+ :name "claude-code-ide-mcp-xref-find-apropos"
+ :description "Search for functions, variables, or classes by name pattern across your project. Helps you discover code elements when you know part of the name"
+ :enabled #'claude-code-ide-emacs-tools--nav-enabled-p
+ :args '((:name "pattern"
+                :type string
+                :description "The pattern to search for symbols")
+         (:name "file_path"
+                :type string
+                :description "File path to use as context for the search")))
 
-  ;; Register xref tools
-  (claude-code-ide-make-tool
-   :function #'claude-code-ide-mcp-xref-find-references
-   :name "claude-code-ide-mcp-xref-find-references"
-   :description "Find where a function, variable, or class is used throughout your codebase. Perfect for understanding code dependencies and impact analysis"
-   :args '((:name "identifier"
-                  :type string
-                  :description "The identifier to find references for")
-           (:name "file_path"
-                  :type string
-                  :description "File path to use as context for the search")))
+;; Register project info tool
+(claude-code-ide-make-tool
+ :function #'claude-code-ide-mcp-project-info
+ :name "claude-code-ide-mcp-project-info"
+ :description "Get quick overview of your current project context including directory, active file, and project size"
+ :enabled #'claude-code-ide-emacs-tools--nav-enabled-p
+ :args nil)
 
-  (claude-code-ide-make-tool
-   :function #'claude-code-ide-mcp-xref-find-apropos
-   :name "claude-code-ide-mcp-xref-find-apropos"
-   :description "Search for functions, variables, or classes by name pattern across your project. Helps you discover code elements when you know part of the name"
-   :args '((:name "pattern"
-                  :type string
-                  :description "The pattern to search for symbols")
-           (:name "file_path"
-                  :type string
-                  :description "File path to use as context for the search")))
+;; Register imenu tool
+(claude-code-ide-make-tool
+ :function #'claude-code-ide-mcp-imenu-list-symbols
+ :name "claude-code-ide-mcp-imenu-list-symbols"
+ :description "Navigate and explore a file's structure by listing all its functions, classes, and variables with their locations"
+ :enabled #'claude-code-ide-emacs-tools--nav-enabled-p
+ :args '((:name "file_path"
+                :type string
+                :description "Path to the file to analyze for symbols")))
 
-  ;; Register project info tool
-  (claude-code-ide-make-tool
-   :function #'claude-code-ide-mcp-project-info
-   :name "claude-code-ide-mcp-project-info"
-   :description "Get quick overview of your current project context including directory, active file, and project size"
-   :args nil)
+;; Register tree-sitter tool
+(claude-code-ide-make-tool
+ :function #'claude-code-ide-mcp-treesit-info
+ :name "claude-code-ide-mcp-treesit-info"
+ :description "Get tree-sitter syntax tree information for a file, including node types, ranges, and hierarchical structure. Useful for understanding code structure and AST analysis"
+ :enabled #'claude-code-ide-emacs-tools--nav-enabled-p
+ :args '((:name "file_path"
+                :type string
+                :description "Path to the file to analyze")
+         (:name "line"
+                :type number
+                :description "Line number (1-based)"
+                :optional t)
+         (:name "column"
+                :type number
+                :description "Column number (0-based)"
+                :optional t)
+         (:name "whole_file"
+                :type boolean
+                :description "Show the entire file's syntax tree"
+                :optional t)
+         (:name "include_ancestors"
+                :type boolean
+                :description "Include parent node hierarchy"
+                :optional t)
+         (:name "include_children"
+                :type boolean
+                :description "Include child nodes"
+                :optional t)))
 
-  ;; Register imenu tool
-  (claude-code-ide-make-tool
-   :function #'claude-code-ide-mcp-imenu-list-symbols
-   :name "claude-code-ide-mcp-imenu-list-symbols"
-   :description "Navigate and explore a file's structure by listing all its functions, classes, and variables with their locations"
-   :args '((:name "file_path"
-                  :type string
-                  :description "Path to the file to analyze for symbols")))
-
-  ;; Register tree-sitter tool
-  (claude-code-ide-make-tool
-   :function #'claude-code-ide-mcp-treesit-info
-   :name "claude-code-ide-mcp-treesit-info"
-   :description "Get tree-sitter syntax tree information for a file, including node types, ranges, and hierarchical structure. Useful for understanding code structure and AST analysis"
-   :args '((:name "file_path"
-                  :type string
-                  :description "Path to the file to analyze")
-           (:name "line"
-                  :type number
-                  :description "Line number (1-based)"
-                  :optional t)
-           (:name "column"
-                  :type number
-                  :description "Column number (0-based)"
-                  :optional t)
-           (:name "whole_file"
-                  :type boolean
-                  :description "Show the entire file's syntax tree"
-                  :optional t)
-           (:name "include_ancestors"
-                  :type boolean
-                  :description "Include parent node hierarchy"
-                  :optional t)
-           (:name "include_children"
-                  :type boolean
-                  :description "Include child nodes"
-                  :optional t)))
-
-  ;; Register session run-status tool (driven by Claude Code hooks)
-  (claude-code-ide-make-tool
-   :function #'claude-code-ide-mcp-set-session-status
-   :name "set_session_status"
-   :description "Report this Claude session's run status to Emacs. Intended to be called by Claude Code hooks, not interactively."
-   :args '((:name "status"
-                  :type string
-                  :description "One of: idle, working, blocked"))))
+;; Register session run-status tool (driven by Claude Code hooks)
+(claude-code-ide-make-tool
+ :function #'claude-code-ide-mcp-set-session-status
+ :name "set-session-status"
+ :description "Report this Claude session's run status to Emacs. Intended to be called by Claude Code hooks, not interactively."
+ :enabled #'claude-code-ide-emacs-tools--status-enabled-p
+ :args '((:name "status"
+                :type string
+                :description "One of: idle, working, blocked")))
 
 (provide 'claude-code-ide-emacs-tools)
 ;;; claude-code-ide-emacs-tools.el ends here
