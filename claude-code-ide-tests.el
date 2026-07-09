@@ -2640,6 +2640,7 @@ lines for a mid-line selection."
   "Test the --insert-text primitive inserts without submitting."
   (let ((sent-string nil)
         (sent-return nil)
+        (sent-newline nil)
         (bufname "*claude-test-term*"))
     (get-buffer-create bufname)
     (unwind-protect
@@ -2647,10 +2648,14 @@ lines for a mid-line selection."
                    (lambda (&rest _) bufname))
                   ((symbol-function 'claude-code-ide--terminal-send-string)
                    (lambda (str) (setq sent-string str)))
+                  ((symbol-function 'claude-code-ide--terminal-send-newline)
+                   (lambda () (setq sent-newline t)))
                   ((symbol-function 'claude-code-ide--terminal-send-return)
                    (lambda () (setq sent-return t))))
           (claude-code-ide--insert-text "hello")
           (should (equal sent-string "hello"))
+          ;; A separator newline is appended, but the prompt is not submitted.
+          (should sent-newline)
           (should-not sent-return))
       (kill-buffer bufname))
     ;; No session -> user-error
@@ -2660,6 +2665,7 @@ lines for a mid-line selection."
   "Test insert-region-or-buffer inserts a reference without submitting."
   (let ((sent-string nil)
         (sent-return nil)
+        (sent-newline nil)
         (bufname "*claude-test-term*"))
     (get-buffer-create bufname)
     (unwind-protect
@@ -2667,6 +2673,8 @@ lines for a mid-line selection."
                    (lambda (&rest _) bufname))
                   ((symbol-function 'claude-code-ide--terminal-send-string)
                    (lambda (str) (setq sent-string str)))
+                  ((symbol-function 'claude-code-ide--terminal-send-newline)
+                   (lambda () (setq sent-newline t)))
                   ((symbol-function 'claude-code-ide--terminal-send-return)
                    (lambda () (setq sent-return t))))
           ;; No region -> whole buffer reference, no submit
@@ -2676,6 +2684,8 @@ lines for a mid-line selection."
             (claude-code-ide-insert-region-or-buffer)
             (set-buffer-modified-p nil))
           (should (equal sent-string "@/tmp/ins.el"))
+          ;; A separator newline is appended, but the prompt is not submitted.
+          (should sent-newline)
           (should-not sent-return)
           ;; Non-file buffer -> user-error
           (with-temp-buffer
@@ -2687,6 +2697,7 @@ lines for a mid-line selection."
   "Test yank pastes the current kill without submitting."
   (let ((sent-string nil)
         (sent-return nil)
+        (sent-newline nil)
         (bufname "*claude-test-term*"))
     (get-buffer-create bufname)
     (unwind-protect
@@ -2696,10 +2707,14 @@ lines for a mid-line selection."
                    (lambda (&rest _) "yanked text"))
                   ((symbol-function 'claude-code-ide--terminal-send-string)
                    (lambda (str) (setq sent-string str)))
+                  ((symbol-function 'claude-code-ide--terminal-send-newline)
+                   (lambda () (setq sent-newline t)))
                   ((symbol-function 'claude-code-ide--terminal-send-return)
                    (lambda () (setq sent-return t))))
           (claude-code-ide-yank)
           (should (equal sent-string "yanked text"))
+          ;; A separator newline is appended, but the prompt is not submitted.
+          (should sent-newline)
           (should-not sent-return))
       (kill-buffer bufname))
     ;; Empty kill ring -> user-error, nothing sent
@@ -2708,6 +2723,27 @@ lines for a mid-line selection."
                (lambda (&rest _) (error "Kill ring is empty"))))
       (should-error (claude-code-ide-yank) :type 'user-error)
       (should (null sent-string)))))
+
+(ert-deftest claude-code-ide-test-insert-text-consecutive ()
+  "Test consecutive --insert-text calls stay separated, not glued.
+Reproduces the bug where back-to-back inserts produced a single
+malformed token such as \"@foo@bar\"."
+  (let ((sent-string "")
+        (bufname "*claude-test-term*"))
+    (get-buffer-create bufname)
+    (unwind-protect
+        ;; Do NOT mock --terminal-send-newline: exercise the real separator
+        ;; while accumulating every string sent to the terminal.
+        (cl-letf (((symbol-function 'claude-code-ide--get-buffer-name)
+                   (lambda (&rest _) bufname))
+                  ((symbol-function 'claude-code-ide--terminal-send-string)
+                   (lambda (str) (setq sent-string (concat sent-string str)))))
+          (claude-code-ide--insert-text "@foo")
+          (claude-code-ide--insert-text "@bar")
+          ;; Each insert lands on its own line via a soft newline (ESC + CR),
+          ;; so the two references are never concatenated directly.
+          (should (equal sent-string "@foo\e\r@bar\e\r")))
+      (kill-buffer bufname))))
 
 ;;; Tests for Completion Notifications (Phase 3 port)
 
