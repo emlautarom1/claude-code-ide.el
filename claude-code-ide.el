@@ -655,6 +655,13 @@ cursor management, and process buffering for superior user experience."
    (t
     (error "Unknown terminal backend: %s" claude-code-ide-terminal-backend))))
 
+(defun claude-code-ide--terminal-send-newline ()
+  "Insert a newline in the prompt without submitting it.
+Sends Meta-Return (ESC + CR), the sequence Claude Code interprets as a
+soft newline rather than a prompt submission.  A bare LF or CR would
+submit the prompt instead."
+  (claude-code-ide--terminal-send-string "\e\r"))
+
 (defun claude-code-ide--sync-terminal-dimensions (buffer window)
   "Sync terminal dimensions in BUFFER to match WINDOW size.
 This ensures the terminal process has the correct dimensions after
@@ -684,7 +691,7 @@ This function binds:
          (lambda ()
            "Send Meta-Return (ESC + CR) to insert a newline without submitting."
            (interactive)
-           (claude-code-ide--terminal-send-string "\e\r")))
+           (claude-code-ide--terminal-send-newline)))
         (send-escape
          (lambda ()
            "Send an escape key to the terminal."
@@ -1476,9 +1483,12 @@ Signals a `user-error' when there is no session for the project."
 
 (defun claude-code-ide--insert-text (text)
   "Insert TEXT into the current project's Claude terminal without submitting.
+A trailing soft newline is appended so consecutive insertions stay on
+separate lines instead of being glued into a single malformed token.
 Returns the Claude buffer on success, signals a `user-error' otherwise."
   (claude-code-ide--with-terminal-buffer
    (claude-code-ide--terminal-send-string text)
+   (claude-code-ide--terminal-send-newline)
    buffer))
 
 (defun claude-code-ide--send-text (text)
