@@ -2709,7 +2709,7 @@ lines for a mid-line selection."
             (setq buffer-file-name "/tmp/ins.el")
             (claude-code-ide-insert-region-or-buffer)
             (set-buffer-modified-p nil))
-          (should (equal prompted-string "Context (optional): "))
+          (should (equal prompted-string "Add context (optional): "))
           (should (equal sent-string "@/tmp/ins.el"))
           ;; A separator newline is appended, but the prompt is not submitted.
           (should sent-newline)
@@ -2754,7 +2754,7 @@ lines for a mid-line selection."
                    (lambda () (setq sent-return t))))
           ;; Empty context -> just the yanked text
           (claude-code-ide-yank)
-          (should (equal prompted-string "Context (optional): "))
+          (should (equal prompted-string "Add context (optional): "))
           (should (equal sent-string "yanked text"))
           ;; A separator newline is appended, but the prompt is not submitted.
           (should sent-newline)
@@ -2808,7 +2808,7 @@ malformed token such as \"@foo@bar\"."
                  (setq prompted-string prompt)
                  "  hello  ")))
       (should (equal (claude-code-ide--read-context) "hello"))
-      (should (equal prompted-string "Context (optional): ")))
+      (should (equal prompted-string "Add context (optional): ")))
     ;; Empty input -> nil
     (cl-letf (((symbol-function 'read-string)
                (lambda (&rest _) "")))

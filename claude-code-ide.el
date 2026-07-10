@@ -1629,7 +1629,7 @@ buffer is not visiting a file."
 (defun claude-code-ide--read-context ()
   "Read optional annotation context from the minibuffer.
 Return the trimmed string, or nil when no context is provided."
-  (let ((context (string-trim (read-string "Context (optional): "))))
+  (let ((context (string-trim (read-string "Add context (optional): "))))
     (unless (string-empty-p context)
       context)))
 
