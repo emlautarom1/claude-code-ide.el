@@ -1633,11 +1633,11 @@ Return the trimmed string, or nil when no context is provided."
     (unless (string-empty-p context)
       context)))
 
-(defun claude-code-ide--append-context (content context)
-  "Return CONTENT with CONTEXT appended after \" - \".
+(defun claude-code-ide--prepend-context (content context)
+  "Return CONTENT prefixed with CONTEXT as \"CONTEXT: CONTENT\".
 When CONTEXT is nil, return CONTENT unchanged."
   (if context
-      (format "%s - %s" content context)
+      (format "%s: %s" context content)
     content))
 
 (defun claude-code-ide--format-errors-at-point ()
@@ -1664,13 +1664,14 @@ and other systems).  Returns nil when no diagnostics are found."
 (defun claude-code-ide-insert-region-or-buffer ()
   "Insert an @-reference to the region or buffer into the Claude prompt.
 With an active region, reference its lines; otherwise reference the whole
-buffer.  Prompt for optional context which, when provided, is appended to
-the reference after \" - \".  The reference is inserted without submitting."
+buffer.  Prompt for optional context which, when provided, is prepended to
+the reference as \"CONTEXT: reference\".  The reference is inserted without
+submitting."
   (interactive)
   (let ((ref (claude-code-ide--region-or-buffer-reference)))
     (unless ref
       (user-error "Current buffer is not visiting a file"))
-    (let ((text (claude-code-ide--append-context
+    (let ((text (claude-code-ide--prepend-context
                  ref (claude-code-ide--read-context))))
       (claude-code-ide--insert-text text)
       (claude-code-ide-debug "Inserted reference: %s" text))))
@@ -1680,14 +1681,14 @@ the reference after \" - \".  The reference is inserted without submitting."
   "Paste the latest kill (kill-ring/clipboard) into the Claude terminal.
 Analogous to focusing the Claude session and pressing \\[yank]; the text
 is inserted without submitting.  Prompt for optional context which, when
-provided, is appended to the pasted text after \" - \"."
+provided, is prepended to the pasted text as \"CONTEXT: text\"."
   (interactive)
   (let ((text (ignore-errors (current-kill 0))))
     (unless text
       (user-error "Kill ring is empty"))
     (claude-code-ide--insert-text
-     (claude-code-ide--append-context (substring-no-properties text)
-                                      (claude-code-ide--read-context)))))
+     (claude-code-ide--prepend-context (substring-no-properties text)
+                                       (claude-code-ide--read-context)))))
 
 ;;;###autoload
 (defun claude-code-ide-toggle-vterm-optimization ()

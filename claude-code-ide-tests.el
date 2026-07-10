@@ -2714,14 +2714,14 @@ lines for a mid-line selection."
           ;; A separator newline is appended, but the prompt is not submitted.
           (should sent-newline)
           (should-not sent-return)
-          ;; Non-empty context -> appended after " - "
+          ;; Non-empty context -> prepended as "CONTEXT: reference"
           (setq sent-string nil context-input "explore this")
           (with-temp-buffer
             (insert "x")
             (setq buffer-file-name "/tmp/ins.el")
             (claude-code-ide-insert-region-or-buffer)
             (set-buffer-modified-p nil))
-          (should (equal sent-string "@/tmp/ins.el - explore this"))
+          (should (equal sent-string "explore this: @/tmp/ins.el"))
           ;; Non-file buffer -> user-error
           (with-temp-buffer
             (should-error (claude-code-ide-insert-region-or-buffer)
@@ -2759,10 +2759,10 @@ lines for a mid-line selection."
           ;; A separator newline is appended, but the prompt is not submitted.
           (should sent-newline)
           (should-not sent-return)
-          ;; Non-empty context -> appended after " - "
+          ;; Non-empty context -> prepended as "CONTEXT: text"
           (setq sent-string nil context-input "refactor this")
           (claude-code-ide-yank)
-          (should (equal sent-string "yanked text - refactor this")))
+          (should (equal sent-string "refactor this: yanked text")))
       (kill-buffer bufname))
     ;; Empty kill ring -> user-error, nothing sent
     (setq sent-string nil)
@@ -2792,11 +2792,11 @@ malformed token such as \"@foo@bar\"."
           (should (equal sent-string "@foo\e\r@bar\e\r")))
       (kill-buffer bufname))))
 
-(ert-deftest claude-code-ide-test-append-context ()
-  "Test --append-context joins content and context with \" - \"."
-  (should (equal (claude-code-ide--append-context "@foo#1" "do it")
-                 "@foo#1 - do it"))
-  (should (equal (claude-code-ide--append-context "@foo#1" nil)
+(ert-deftest claude-code-ide-test-prepend-context ()
+  "Test --prepend-context prefixes content with \"CONTEXT: \"."
+  (should (equal (claude-code-ide--prepend-context "@foo#1" "do it")
+                 "do it: @foo#1"))
+  (should (equal (claude-code-ide--prepend-context "@foo#1" nil)
                  "@foo#1")))
 
 (ert-deftest claude-code-ide-test-read-context ()
