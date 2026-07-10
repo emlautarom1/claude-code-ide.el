@@ -529,8 +529,8 @@ have completed before cleanup.  Waits up to 5 seconds."
           (claude-code-ide--terminal-send-return)
           (should (equal ghostel-string-sent "\r")))))))
 
-(ert-deftest claude-code-ide-test-send-prompt-command ()
-  "Test the claude-code-ide-send-prompt command."
+(ert-deftest claude-code-ide-test-submit-prompt-command ()
+  "Test the claude-code-ide-submit-prompt command."
   (let ((test-prompt "Test prompt from minibuffer")
         (prompted-string nil)
         (sent-string nil)
@@ -550,15 +550,15 @@ have completed before cleanup.  Waits up to 5 seconds."
       ;; Test with existing buffer
       (with-temp-buffer
         (rename-buffer "*test-claude-buffer*")
-        (claude-code-ide-send-prompt)
+        (claude-code-ide-submit-prompt)
         (should (equal prompted-string "Claude prompt: "))
         (should (equal sent-string test-prompt))
         (should sent-return))
 
       ;; Test with non-existent buffer (should error)
-      (should-error (claude-code-ide-send-prompt) :type 'user-error)
+      (should-error (claude-code-ide-submit-prompt) :type 'user-error)
 
-      ;; Region + file -> the @-reference is prepended to the prompt
+      ;; An active region does NOT attach a reference; the raw prompt is sent.
       (setq sent-string nil sent-return nil)
       (with-temp-buffer
         (rename-buffer "*test-claude-buffer*")
@@ -569,10 +569,9 @@ have completed before cleanup.  Waits up to 5 seconds."
         (goto-char (line-end-position 2))
         (let ((transient-mark-mode t))
           (activate-mark)
-          (claude-code-ide-send-prompt))
+          (claude-code-ide-submit-prompt))
         (set-buffer-modified-p nil)
-        (should (equal sent-string
-                       (concat "@/tmp/prompt.el#1-2\n\n" test-prompt)))
+        (should (equal sent-string test-prompt))
         (should sent-return))
 
       ;; Test with empty prompt (should not send anything)
@@ -581,7 +580,7 @@ have completed before cleanup.  Waits up to 5 seconds."
                  (lambda (&rest _) "")))
         (with-temp-buffer
           (rename-buffer "*test-claude-buffer*")
-          (claude-code-ide-send-prompt)
+          (claude-code-ide-submit-prompt)
           (should (null sent-string))
           (should (null sent-return)))))))
 
@@ -2687,27 +2686,42 @@ lines for a mid-line selection."
   (let ((sent-string nil)
         (sent-return nil)
         (sent-newline nil)
+        (prompted-string nil)
+        (context-input "")
         (bufname "*claude-test-term*"))
     (get-buffer-create bufname)
     (unwind-protect
         (cl-letf (((symbol-function 'claude-code-ide--get-buffer-name)
                    (lambda (&rest _) bufname))
+                  ((symbol-function 'read-string)
+                   (lambda (prompt &rest _)
+                     (setq prompted-string prompt)
+                     context-input))
                   ((symbol-function 'claude-code-ide--terminal-send-string)
                    (lambda (str) (setq sent-string str)))
                   ((symbol-function 'claude-code-ide--terminal-send-newline)
                    (lambda () (setq sent-newline t)))
                   ((symbol-function 'claude-code-ide--terminal-send-return)
                    (lambda () (setq sent-return t))))
-          ;; No region -> whole buffer reference, no submit
+          ;; No region, empty context -> whole buffer reference, no submit
           (with-temp-buffer
             (insert "x")
             (setq buffer-file-name "/tmp/ins.el")
             (claude-code-ide-insert-region-or-buffer)
             (set-buffer-modified-p nil))
+          (should (equal prompted-string "Add context (optional): "))
           (should (equal sent-string "@/tmp/ins.el"))
           ;; A separator newline is appended, but the prompt is not submitted.
           (should sent-newline)
           (should-not sent-return)
+          ;; Non-empty context -> prepended as "CONTEXT: reference"
+          (setq sent-string nil context-input "explore this")
+          (with-temp-buffer
+            (insert "x")
+            (setq buffer-file-name "/tmp/ins.el")
+            (claude-code-ide-insert-region-or-buffer)
+            (set-buffer-modified-p nil))
+          (should (equal sent-string "explore this: @/tmp/ins.el"))
           ;; Non-file buffer -> user-error
           (with-temp-buffer
             (should-error (claude-code-ide-insert-region-or-buffer)
@@ -2719,6 +2733,8 @@ lines for a mid-line selection."
   (let ((sent-string nil)
         (sent-return nil)
         (sent-newline nil)
+        (prompted-string nil)
+        (context-input "")
         (bufname "*claude-test-term*"))
     (get-buffer-create bufname)
     (unwind-protect
@@ -2726,17 +2742,27 @@ lines for a mid-line selection."
                    (lambda (&rest _) bufname))
                   ((symbol-function 'current-kill)
                    (lambda (&rest _) "yanked text"))
+                  ((symbol-function 'read-string)
+                   (lambda (prompt &rest _)
+                     (setq prompted-string prompt)
+                     context-input))
                   ((symbol-function 'claude-code-ide--terminal-send-string)
                    (lambda (str) (setq sent-string str)))
                   ((symbol-function 'claude-code-ide--terminal-send-newline)
                    (lambda () (setq sent-newline t)))
                   ((symbol-function 'claude-code-ide--terminal-send-return)
                    (lambda () (setq sent-return t))))
+          ;; Empty context -> just the yanked text
           (claude-code-ide-yank)
+          (should (equal prompted-string "Add context (optional): "))
           (should (equal sent-string "yanked text"))
           ;; A separator newline is appended, but the prompt is not submitted.
           (should sent-newline)
-          (should-not sent-return))
+          (should-not sent-return)
+          ;; Non-empty context -> prepended as "CONTEXT: text"
+          (setq sent-string nil context-input "refactor this")
+          (claude-code-ide-yank)
+          (should (equal sent-string "refactor this: yanked text")))
       (kill-buffer bufname))
     ;; Empty kill ring -> user-error, nothing sent
     (setq sent-string nil)
@@ -2765,6 +2791,32 @@ malformed token such as \"@foo@bar\"."
           ;; so the two references are never concatenated directly.
           (should (equal sent-string "@foo\e\r@bar\e\r")))
       (kill-buffer bufname))))
+
+(ert-deftest claude-code-ide-test-prepend-context ()
+  "Test --prepend-context prefixes content with \"CONTEXT: \"."
+  (should (equal (claude-code-ide--prepend-context "@foo#1" "do it")
+                 "do it: @foo#1"))
+  (should (equal (claude-code-ide--prepend-context "@foo#1" nil)
+                 "@foo#1")))
+
+(ert-deftest claude-code-ide-test-read-context ()
+  "Test --read-context returns trimmed input or nil when empty."
+  (let ((prompted-string nil))
+    ;; Non-empty input is trimmed and returned
+    (cl-letf (((symbol-function 'read-string)
+               (lambda (prompt &rest _)
+                 (setq prompted-string prompt)
+                 "  hello  ")))
+      (should (equal (claude-code-ide--read-context) "hello"))
+      (should (equal prompted-string "Add context (optional): ")))
+    ;; Empty input -> nil
+    (cl-letf (((symbol-function 'read-string)
+               (lambda (&rest _) "")))
+      (should (null (claude-code-ide--read-context))))
+    ;; Whitespace-only input -> nil
+    (cl-letf (((symbol-function 'read-string)
+               (lambda (&rest _) "   ")))
+      (should (null (claude-code-ide--read-context))))))
 
 ;;; Tests for Completion Notifications (Phase 3 port)
 

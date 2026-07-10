@@ -39,7 +39,7 @@
 (declare-function claude-code-ide-switch-to-buffer "claude-code-ide" ())
 (declare-function claude-code-ide-insert-region-or-buffer "claude-code-ide" ())
 (declare-function claude-code-ide-yank "claude-code-ide" ())
-(declare-function claude-code-ide-send-prompt "claude-code-ide" ())
+(declare-function claude-code-ide-submit-prompt "claude-code-ide" ())
 (declare-function claude-code-ide-fix-error-at-point "claude-code-ide" ())
 (declare-function claude-code-ide-toggle "claude-code-ide" ())
 (declare-function claude-code-ide-check-status "claude-code-ide" ())
@@ -330,7 +330,7 @@ Otherwise, if multiple sessions exist, prompt for selection."
    ["Interaction"
     ("i" "Insert region or buffer" claude-code-ide-insert-region-or-buffer)
     ("y" "Yank" claude-code-ide-yank)
-    ("p" "Send prompt" claude-code-ide-send-prompt)
+    ("p" "Submit prompt" claude-code-ide-submit-prompt)
     ("." "Fix at point" claude-code-ide-fix-error-at-point)]
    ["Submenus"
     ("C" "Configuration" claude-code-ide-config-menu)
