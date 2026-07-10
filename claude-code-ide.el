@@ -1529,10 +1529,12 @@ live preview.")
 ;;;###autoload
 (defun claude-code-ide-list-sessions ()
   "List all active Claude Code sessions and switch to the selected one.
-Sessions are ordered by run status (waiting first, then idle, then busy)
-and annotated with their status and how long they have held it.  The picker
-is `claude-code-ide-session-read-function'; loading `claude-code-ide-consult'
-upgrades it to a `consult'-based one with live preview."
+Sessions are ordered by run status (waiting first, then idle, then busy).
+When `marginalia' is loaded each candidate is annotated with its name, age,
+status and any waiting reason; without it the picker shows just the project
+directory.  The picker is `claude-code-ide-session-read-function'; loading
+`claude-code-ide-consult' upgrades it to a `consult'-based one with live
+preview."
   (interactive)
   (claude-code-ide--cleanup-dead-processes)
   ;; Pull the latest run status from the CLI session files in case a
