@@ -51,7 +51,7 @@
 ;; M-x claude-code-ide-list-sessions - List and switch between all sessions
 ;; M-x claude-code-ide-check-status - Check CLI availability and version
 ;; M-x claude-code-ide-insert-region-or-buffer - Insert region/buffer as an @-reference
-;; M-x claude-code-ide-send-prompt - Send a prompt with region/buffer context and submit
+;; M-x claude-code-ide-submit-prompt - Read a prompt from the minibuffer and submit it
 ;; M-x claude-code-ide-yank - Paste the kill-ring/clipboard into the session
 ;; M-x claude-code-ide-fix-error-at-point - Ask Claude to fix the diagnostic at point
 ;;
@@ -1626,6 +1626,20 @@ buffer is not visiting a file."
            (line-number-at-pos end t)))
       (format "@%s" file))))
 
+(defun claude-code-ide--read-context ()
+  "Read optional annotation context from the minibuffer.
+Return the trimmed string, or nil when no context is provided."
+  (let ((context (string-trim (read-string "Context (optional): "))))
+    (unless (string-empty-p context)
+      context)))
+
+(defun claude-code-ide--append-context (content context)
+  "Return CONTENT with CONTEXT appended after \" - \".
+When CONTEXT is nil, return CONTENT unchanged."
+  (if context
+      (format "%s - %s" content context)
+    content))
+
 (defun claude-code-ide--format-errors-at-point ()
   "Return a string describing diagnostics at point.
 Tries Flycheck first, then falls back to `help-at-pt' (used by Flymake
@@ -1650,24 +1664,30 @@ and other systems).  Returns nil when no diagnostics are found."
 (defun claude-code-ide-insert-region-or-buffer ()
   "Insert an @-reference to the region or buffer into the Claude prompt.
 With an active region, reference its lines; otherwise reference the whole
-buffer.  The reference is inserted without submitting."
+buffer.  Prompt for optional context which, when provided, is appended to
+the reference after \" - \".  The reference is inserted without submitting."
   (interactive)
   (let ((ref (claude-code-ide--region-or-buffer-reference)))
     (unless ref
       (user-error "Current buffer is not visiting a file"))
-    (claude-code-ide--insert-text ref)
-    (claude-code-ide-debug "Inserted reference: %s" ref)))
+    (let ((text (claude-code-ide--append-context
+                 ref (claude-code-ide--read-context))))
+      (claude-code-ide--insert-text text)
+      (claude-code-ide-debug "Inserted reference: %s" text))))
 
 ;;;###autoload
 (defun claude-code-ide-yank ()
   "Paste the latest kill (kill-ring/clipboard) into the Claude terminal.
 Analogous to focusing the Claude session and pressing \\[yank]; the text
-is inserted without submitting."
+is inserted without submitting.  Prompt for optional context which, when
+provided, is appended to the pasted text after \" - \"."
   (interactive)
   (let ((text (ignore-errors (current-kill 0))))
     (unless text
       (user-error "Kill ring is empty"))
-    (claude-code-ide--insert-text (substring-no-properties text))))
+    (claude-code-ide--insert-text
+     (claude-code-ide--append-context (substring-no-properties text)
+                                      (claude-code-ide--read-context)))))
 
 ;;;###autoload
 (defun claude-code-ide-toggle-vterm-optimization ()
@@ -1683,21 +1703,16 @@ Use this to balance between visual smoothness and raw responsiveness."
              "disabled (direct rendering, maximum responsiveness)")))
 
 ;;;###autoload
-(defun claude-code-ide-send-prompt (&optional prompt)
-  "Send a prompt to Claude Code with the region or buffer as context.
-When called interactively, read PROMPT from the minibuffer.  If a region
-is active it is referenced; otherwise the whole buffer file is
-referenced.  The reference, when available, is prepended to PROMPT and
-the whole thing is submitted."
+(defun claude-code-ide-submit-prompt (&optional prompt)
+  "Read PROMPT from the minibuffer and submit it to Claude Code.
+When called interactively, PROMPT is read from the minibuffer; an empty
+prompt is a no-op.  No file reference is attached, as Claude Code already
+tracks the cursor position."
   (interactive)
   (let ((prompt-to-send (or prompt (read-string "Claude prompt: "))))
     (unless (string-empty-p prompt-to-send)
-      (let* ((ref (claude-code-ide--region-or-buffer-reference))
-             (text (if ref
-                       (format "%s\n\n%s" ref prompt-to-send)
-                     prompt-to-send)))
-        (claude-code-ide--send-text text)
-        (claude-code-ide-debug "Sent prompt to Claude Code: %s" text)))))
+      (claude-code-ide--send-text prompt-to-send)
+      (claude-code-ide-debug "Submitted prompt to Claude Code: %s" prompt-to-send))))
 
 ;;;###autoload
 (defun claude-code-ide-fix-error-at-point ()
