@@ -137,15 +137,15 @@ The easiest way to interact with Claude Code IDE is through the transient menu i
 |-----------------------------------------------+--------------------------------------------------------------|
 | =M-x claude-code-ide-menu=                    | Open transient menu with all Claude Code commands            |
 | =M-x claude-code-ide=                         | Start Claude Code for the current project                    |
-| =M-x claude-code-ide-send-prompt=             | Send a prompt with the region/buffer as context, then submit |
+| =M-x claude-code-ide-submit-prompt=           | Read a prompt from the minibuffer and submit it              |
 | =M-x claude-code-ide-continue=                | Continue most recent conversation in directory               |
 | =M-x claude-code-ide-resume=                  | Resume Claude Code with previous conversation                |
 | =M-x claude-code-ide-stop=                    | Stop Claude Code for the current project                     |
 | =M-x claude-code-ide-switch-to-buffer=        | Switch to project's Claude buffer                            |
 | =M-x claude-code-ide-list-sessions=           | List sessions (ordered by status) and switch                 |
 | =M-x claude-code-ide-check-status=            | Check if Claude Code CLI is installed and working            |
-| =M-x claude-code-ide-insert-region-or-buffer= | Insert the region or buffer as an @-reference (no submit)    |
-| =M-x claude-code-ide-yank=                    | Paste the kill-ring/clipboard into the session (no submit)   |
+| =M-x claude-code-ide-insert-region-or-buffer= | Insert region/buffer @-reference with context (no submit)    |
+| =M-x claude-code-ide-yank=                    | Paste kill-ring/clipboard with context (no submit)           |
 | =M-x claude-code-ide-fix-error-at-point=      | Ask Claude to fix the diagnostic at point                    |
 | =M-x claude-code-ide-toggle=                  | Toggle visibility of Claude Code window                      |
 | =M-x claude-code-ide-toggle-recent=           | Toggle most recent Claude window globally                    |
