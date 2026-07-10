@@ -20,6 +20,8 @@ This package integrates Claude Code CLI with Emacs via WebSocket and the Model C
 - `claude-code-ide-diagnostics.el` - Flycheck/Flymake diagnostics integration
 - `claude-code-ide-transient.el` - Transient menu interface
 - `claude-code-ide-debug.el` - Debug logging utilities
+- `claude-code-ide-consult.el` - Optional consult integration for the session picker
+- `claude-code-ide-marginalia.el` - Optional marginalia annotations for the session picker
 - `claude-code-ide-tests.el` - ERT test suite with mocks
 
 ## Coordinate Conventions

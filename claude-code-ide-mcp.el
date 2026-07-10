@@ -55,7 +55,8 @@
 (require 'claude-code-ide-mcp-server)
 
 ;; External declarations
-(defvar claude-code-ide--session-ids)
+(declare-function claude-code-ide--get-session "claude-code-ide" (directory))
+(declare-function claude-code-ide--session-session-id "claude-code-ide" (session))
 (declare-function claude-code-ide-mcp--build-tool-list "claude-code-ide-mcp-handlers" ())
 (declare-function claude-code-ide-mcp--build-tool-schemas "claude-code-ide-mcp-handlers" ())
 (declare-function claude-code-ide-mcp--build-tool-descriptions "claude-code-ide-mcp-handlers" ())
@@ -172,25 +173,29 @@ Returns the session if found, nil otherwise."
 
 ;;; Lockfile Management
 
-(defun claude-code-ide-mcp--lockfile-directory ()
-  "Return the directory for MCP lockfiles.
-The Claude Code CLI discovers the MCP server by scanning this directory for
-`<port>.lock' files, so both sides must agree on it.  The CLI derives it from
-the `CLAUDE_CONFIG_DIR' environment variable, defaulting to `~/.claude'; we
-mirror that here.  Since the CLI runs as a subprocess of Emacs and inherits
-this environment, setting `CLAUDE_CONFIG_DIR' relocates the lockfile on both
-sides in lockstep.
+(defun claude-code-ide--config-directory ()
+  "Return the Claude Code configuration directory, slash-terminated.
+The CLI derives it from the `CLAUDE_CONFIG_DIR' environment variable,
+defaulting to `~/.claude'; we mirror that here.  Since the CLI runs as a
+subprocess of Emacs and inherits this environment, setting
+`CLAUDE_CONFIG_DIR' relocates it on both sides in lockstep.
 
 An empty `CLAUDE_CONFIG_DIR' is treated as unset (matching the wider Claude
-Code convention), so a misconfigured shell does not resolve the lockfile
-relative to `default-directory'."
+Code convention), so a misconfigured shell does not resolve paths relative
+to `default-directory'."
   (let ((config-dir (getenv "CLAUDE_CONFIG_DIR")))
     (expand-file-name
-     "ide/"
      (file-name-as-directory
       (if (and config-dir (not (string= config-dir "")))
           config-dir
         "~/.claude")))))
+
+(defun claude-code-ide-mcp--lockfile-directory ()
+  "Return the directory for MCP lockfiles.
+The Claude Code CLI discovers the MCP server by scanning this directory for
+`<port>.lock' files, so both sides must agree on it.  It lives under
+`claude-code-ide--config-directory'."
+  (expand-file-name "ide/" (claude-code-ide--config-directory)))
 
 (defun claude-code-ide-mcp--lockfile-path (port)
   "Return the lockfile path for PORT."
@@ -686,7 +691,8 @@ Optional SESSION contains the MCP session context."
                                         (expand-file-name file-path)))
               (setf (claude-code-ide-mcp-session-last-buffer session) (current-buffer))
               ;; Update MCP tools server's last active buffer
-              (when-let ((session-id (gethash project-dir claude-code-ide--session-ids)))
+              (when-let ((entry (claude-code-ide--get-session project-dir))
+                         (session-id (claude-code-ide--session-session-id entry)))
                 (claude-code-ide-mcp-server-update-last-active-buffer session-id (current-buffer)))))
           (claude-code-ide-debug "Warning: Could not find session for WebSocket connection")))))
 
@@ -945,7 +951,8 @@ the start of the following line."
                                         (expand-file-name file-path)))
               (setf (claude-code-ide-mcp-session-last-buffer session) current-buffer)
               ;; Update MCP tools server's last active buffer
-              (when-let ((session-id (gethash project-dir claude-code-ide--session-ids)))
+              (when-let ((entry (claude-code-ide--get-session project-dir))
+                         (session-id (claude-code-ide--session-session-id entry)))
                 (claude-code-ide-mcp-server-update-last-active-buffer session-id current-buffer)))))))))
 
 ;;; Public API

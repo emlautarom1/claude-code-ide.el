@@ -237,12 +237,29 @@ Ensures MCP lockfile creation does not depend on a writable `~/.claude/ide/'."
        (delete-directory config-dir t))))
 
 (defun claude-code-ide-tests--clear-processes ()
-  "Clear the process hash table for testing.
+  "Clear the session hash table for testing.
 Ensures a clean state before each test that involves process management."
-  (clrhash claude-code-ide--processes)
+  (clrhash claude-code-ide--sessions)
   ;; Also clear MCP sessions
   (when (boundp 'claude-code-ide-mcp--sessions)
     (clrhash claude-code-ide-mcp--sessions)))
+
+(defun claude-code-ide-tests--seed-status (dir status &optional since reason name)
+  "Seed DIR's session with STATUS for testing, as the watcher would.
+Optional SINCE, REASON and NAME populate the matching struct fields.
+Returns the session."
+  (let ((session (claude-code-ide--ensure-session dir)))
+    (setf (claude-code-ide--session-status session) status
+          (claude-code-ide--session-status-since session) (or since (current-time))
+          (claude-code-ide--session-status-reason session) reason
+          (claude-code-ide--session-name session) name)
+    session))
+
+(defun claude-code-ide-tests--write-session-file (sessions-dir pid alist)
+  "Write ALIST as JSON to SESSIONS-DIR/PID.json, the way the CLI would."
+  (make-directory sessions-dir t)
+  (with-temp-file (expand-file-name (format "%d.json" pid) sessions-dir)
+    (insert (json-encode alist))))
 
 (defun claude-code-ide-tests--wait-for-process (buffer)
   "Wait for the process in BUFFER to finish.
@@ -330,19 +347,21 @@ have completed before cleanup.  Waits up to 5 seconds."
                                          :buffer nil))
              (dead-process-name "test-dead"))
         ;; Create a mock dead process
-        (puthash "/dir1" live-process claude-code-ide--processes)
-        (puthash "/dir2" dead-process-name claude-code-ide--processes)
+        (puthash "/dir1" (claude-code-ide--session-create :process live-process)
+                 claude-code-ide--sessions)
+        (puthash "/dir2" (claude-code-ide--session-create :process dead-process-name)
+                 claude-code-ide--sessions)
 
         ;; Before cleanup
-        (should (= (hash-table-count claude-code-ide--processes) 2))
+        (should (= (hash-table-count claude-code-ide--sessions) 2))
 
         ;; Run cleanup
         (claude-code-ide--cleanup-dead-processes)
 
         ;; After cleanup - only live process remains
-        (should (= (hash-table-count claude-code-ide--processes) 1))
-        (should (gethash "/dir1" claude-code-ide--processes))
-        (should (null (gethash "/dir2" claude-code-ide--processes)))
+        (should (= (hash-table-count claude-code-ide--sessions) 1))
+        (should (gethash "/dir1" claude-code-ide--sessions))
+        (should (null (gethash "/dir2" claude-code-ide--sessions)))
 
         ;; Clean up the live process
         (delete-process live-process))
@@ -893,12 +912,14 @@ have completed before cleanup.  Waits up to 5 seconds."
         ;; Test that list-sessions works with no sessions
         (claude-code-ide-list-sessions)
 
-        ;; Manually add mock entries to the process table
-        (puthash "/tmp/project1" (current-buffer) claude-code-ide--processes)
-        (puthash "/tmp/project2" (current-buffer) claude-code-ide--processes)
+        ;; Manually add mock entries to the session table
+        (puthash "/tmp/project1" (claude-code-ide--session-create :process (current-buffer))
+                 claude-code-ide--sessions)
+        (puthash "/tmp/project2" (claude-code-ide--session-create :process (current-buffer))
+                 claude-code-ide--sessions)
 
         ;; Verify we have 2 entries
-        (should (= (hash-table-count claude-code-ide--processes) 2))
+        (should (= (hash-table-count claude-code-ide--sessions) 2))
 
         ;; List sessions should work without error
         (claude-code-ide-list-sessions))
@@ -947,7 +968,7 @@ have completed before cleanup.  Waits up to 5 seconds."
           (claude-code-ide)
           (should (claude-code-ide--get-process dir2)))
         ;; Verify both sessions exist
-        (should (= (hash-table-count claude-code-ide--processes) 2))
+        (should (= (hash-table-count claude-code-ide--sessions) 2))
         ;; Clean up
         (let ((buffers (mapcar (lambda (dir)
                                  (funcall claude-code-ide-buffer-name-function dir))
@@ -2829,134 +2850,259 @@ real command, then restore the mock for the remaining tests."
                      (claude-code-ide--session-dir-key "/tmp/xyz/a"))))))
 
 (ert-deftest claude-code-ide-test-run-status-trailing-slash ()
-  "Status writes and reads agree across trailing-slash differences."
-  (clrhash claude-code-ide--run-status-table)
+  "Status stored under one path form is found under another."
+  (clrhash claude-code-ide--sessions)
   (let ((with-slash "/tmp/ccide-slash-test/")
         (without-slash "/tmp/ccide-slash-test"))
     (unwind-protect
         (progn
-          ;; Written with a trailing slash, read back without one.
-          (claude-code-ide--set-run-status with-slash "working")
-          (should (equal (claude-code-ide-session-run-status without-slash) "working"))
-          ;; And the reverse: clearing via the other form drops it for both.
-          (claude-code-ide--clear-run-status without-slash)
-          (should-not (claude-code-ide-session-run-status with-slash)))
-      (claude-code-ide--clear-run-status with-slash))))
+          ;; Seeded with a trailing slash, read back without one.
+          (claude-code-ide-tests--seed-status with-slash "busy")
+          (should (equal (claude-code-ide-session-run-status without-slash) "busy"))
+          ;; Both forms resolve to the same session entry.
+          (should (eq (claude-code-ide--get-session with-slash)
+                      (claude-code-ide--get-session without-slash))))
+      (clrhash claude-code-ide--sessions))))
 
-(ert-deftest claude-code-ide-test-set-run-status ()
-  "Setting run status validates input and preserves SET-AT across no-ops."
-  (clrhash claude-code-ide--run-status-table)
-  (let ((dir "/tmp/ccide-status-test/"))
-    (unwind-protect
-        (progn
-          ;; Known statuses are stored verbatim and returned.
-          (should (equal (claude-code-ide--set-run-status dir "working") "working"))
-          (should (equal (claude-code-ide-session-run-status dir) "working"))
-          ;; Unknown statuses fall back to idle.
-          (should (equal (claude-code-ide--set-run-status dir "bogus") "idle"))
-          (should (equal (claude-code-ide-session-run-status dir) "idle"))
-          ;; SET-AT is preserved while the status is unchanged, restamped on a
-          ;; real transition.  Seed a distinctive old time to test this without
-          ;; depending on the clock advancing.
-          (let ((old-time '(20000 0 0 0)))
-            (puthash (claude-code-ide--session-dir-key dir)
-                     (cons "working" old-time)
-                     claude-code-ide--run-status-table)
-            (claude-code-ide--set-run-status dir "working")
-            (should (equal (claude-code-ide-session-run-status-since dir) old-time))
-            (claude-code-ide--set-run-status dir "idle")
-            (should-not (equal (claude-code-ide-session-run-status-since dir) old-time))))
-      (claude-code-ide--clear-run-status dir))))
-
-(ert-deftest claude-code-ide-test-clear-run-status ()
-  "Clearing a session's run status removes its table entry."
-  (let ((dir "/tmp/ccide-clear-test/"))
-    (claude-code-ide--set-run-status dir "blocked")
-    (should (claude-code-ide-session-run-status dir))
-    (claude-code-ide--clear-run-status dir)
-    (should-not (claude-code-ide-session-run-status dir))))
+(ert-deftest claude-code-ide-test-map-cli-status ()
+  "CLI statuses map to known values, with an idle fallback for the unknown."
+  (should (equal (claude-code-ide--map-cli-status "waiting") "waiting"))
+  (should (equal (claude-code-ide--map-cli-status "idle") "idle"))
+  (should (equal (claude-code-ide--map-cli-status "busy") "busy"))
+  (should (equal (claude-code-ide--map-cli-status "something-new") "idle"))
+  (should (equal (claude-code-ide--map-cli-status nil) "idle")))
 
 (ert-deftest claude-code-ide-test-run-status-rank ()
-  "Run status ranks order blocked before idle before working."
+  "Run status ranks order waiting before idle before busy."
+  (clrhash claude-code-ide--sessions)
   (let ((dir "/tmp/ccide-rank-test/"))
     (unwind-protect
         (progn
-          (claude-code-ide--set-run-status dir "blocked")
-          (let ((blocked (claude-code-ide--run-status-rank dir)))
-            (claude-code-ide--set-run-status dir "idle")
+          (claude-code-ide-tests--seed-status dir "waiting")
+          (let ((waiting (claude-code-ide--run-status-rank dir)))
+            (claude-code-ide-tests--seed-status dir "idle")
             (let ((idle (claude-code-ide--run-status-rank dir)))
-              (claude-code-ide--set-run-status dir "working")
-              (let ((working (claude-code-ide--run-status-rank dir)))
-                (should (< blocked idle))
-                (should (< idle working))))))
-      (claude-code-ide--clear-run-status dir))))
+              (claude-code-ide-tests--seed-status dir "busy")
+              (let ((busy (claude-code-ide--run-status-rank dir)))
+                (should (< waiting idle))
+                (should (< idle busy))))))
+      (clrhash claude-code-ide--sessions))))
 
 (ert-deftest claude-code-ide-test-cleanup-dead-processes-clears-status ()
   "Sweeping dead processes also drops their run status."
   (skip-unless (executable-find "cat"))
   (claude-code-ide-tests--clear-processes)
-  (clrhash claude-code-ide--run-status-table)
   (let* ((dir (expand-file-name "/tmp/ccide-dead-proc/"))
          (proc (make-process :name "ccide-dead-test" :command '("cat") :noquery t)))
     (delete-process proc)            ; now `process-live-p' is nil
-    (puthash dir proc claude-code-ide--processes)
-    (claude-code-ide--set-run-status dir "working")
+    (claude-code-ide-tests--seed-status dir "busy")
+    (setf (claude-code-ide--session-process (claude-code-ide--get-session dir)) proc)
     (should (claude-code-ide-session-run-status dir))
     (claude-code-ide--cleanup-dead-processes)
-    (should-not (gethash dir claude-code-ide--processes))
+    (should-not (claude-code-ide--get-session dir))
     (should-not (claude-code-ide-session-run-status dir))))
 
-(ert-deftest claude-code-ide-test-session-affixation ()
-  "The session affixation function prefixes candidates with their status."
-  (clrhash claude-code-ide--run-status-table)
-  (let* ((dir "/tmp/ccide-affix-test/")
-         (display (abbreviate-file-name dir))
-         (sessions (list (cons display dir))))
+(ert-deftest claude-code-ide-test-session-marginalia-annotation ()
+  "The marginalia annotation carries the align marker and the session columns."
+  ;; The annotator reuses `marginalia--truncate', so `marginalia' must be present.
+  (skip-unless (require 'marginalia nil t))
+  (require 'claude-code-ide-marginalia)
+  (clrhash claude-code-ide--sessions)
+  (let ((dir "/tmp/ccide-annot-test/")
+        ;; Two minutes ago -> a deterministic "2m" age column.
+        (since (time-subtract (current-time) 120)))
     (unwind-protect
         (progn
-          (claude-code-ide--set-run-status dir "blocked")
-          (let* ((affixate (claude-code-ide--session-affixation sessions))
-                 (entry (car (funcall affixate (list display)))))
-            (should (equal (nth 0 entry) display))           ; candidate unchanged
-            (should (string-match-p "blocked" (nth 1 entry))) ; status in prefix
-            (should (equal (nth 2 entry) ""))))              ; empty suffix
-      (claude-code-ide--clear-run-status dir))))
+          (claude-code-ide-tests--seed-status dir "waiting" since "permission prompt" "my-sess")
+          (let ((ann (claude-code-ide-marginalia--annotate-session
+                      (abbreviate-file-name dir))))
+            ;; The leading character is the marker marginalia aligns on.
+            (should (eq (get-text-property 0 'marginalia--align ann) t))
+            ;; Name, age, status and reason all appear in the annotation.
+            (should (string-match-p "my-sess" ann))
+            (should (string-match-p "2m" ann))
+            (should (string-match-p "waiting" ann))
+            (should (string-match-p "permission prompt" ann))
+            ;; Columns are laid out in order: name, age, status, then reason.
+            (should (< (string-match "my-sess" ann)
+                       (string-match "2m" ann)
+                       (string-match "waiting" ann)
+                       (string-match "permission prompt" ann)))
+            ;; Each column carries its intended face; the status and its reason
+            ;; share the run-status colour ("waiting" -> `error').
+            (should (eq (get-text-property (string-match "my-sess" ann) 'face ann)
+                        'marginalia-documentation))
+            (should (eq (get-text-property (string-match "2m" ann) 'face ann)
+                        'marginalia-date))
+            (should (eq (get-text-property (string-match "waiting" ann) 'face ann)
+                        'error))
+            (should (eq (get-text-property (string-match "permission prompt" ann) 'face ann)
+                        'error))))
+      (clrhash claude-code-ide--sessions))))
+
+(ert-deftest claude-code-ide-test-annotation-column ()
+  "`claude-code-ide-marginalia--column' pads, truncates and faces a column."
+  (skip-unless (require 'marginalia nil t))
+  (require 'claude-code-ide-marginalia)
+  ;; Short text is padded with spaces to the exact width, left-justified.
+  (let ((col (claude-code-ide-marginalia--column "ab" 6 'marginalia-date)))
+    (should (= (string-width col) 6))
+    (should (string-prefix-p "ab" col))
+    ;; The face is applied across the whole padded column.
+    (should (eq (get-text-property 0 'face col) 'marginalia-date)))
+  ;; Overlong text is truncated to the width, keeping the full text as a
+  ;; `help-echo' (the ellipsis glyph itself depends on the display, so we do not
+  ;; assert on it).
+  (let ((col (claude-code-ide-marginalia--column "abcdefghij" 5 'marginalia-documentation)))
+    (should (= (string-width col) 5))
+    (should (equal (get-text-property 0 'help-echo col) "abcdefghij")))
+  ;; A negative width right-justifies: padding goes on the left.
+  (let ((col (claude-code-ide-marginalia--column "ab" -6 'marginalia-date)))
+    (should (= (string-width col) 6))
+    (should (string-prefix-p " " col))
+    (should (string-suffix-p "ab" col))))
+
+(ert-deftest claude-code-ide-test-session-marginalia-annotation-columns-align ()
+  "A long name is truncated so the later columns keep their fixed offset."
+  (skip-unless (require 'marginalia nil t))
+  (require 'claude-code-ide-marginalia)
+  (clrhash claude-code-ide--sessions)
+  (let ((short-dir "/tmp/ccide-annot-short/")
+        (long-dir "/tmp/ccide-annot-long/")
+        (since (time-subtract (current-time) 120)))
+    (unwind-protect
+        (progn
+          (claude-code-ide-tests--seed-status short-dir "idle" since nil "short")
+          (claude-code-ide-tests--seed-status
+           long-dir "idle" since nil
+           "a-very-long-session-name-well-past-the-column-width")
+          (let ((short-ann (claude-code-ide-marginalia--annotate-session
+                            (abbreviate-file-name short-dir)))
+                (long-ann (claude-code-ide-marginalia--annotate-session
+                           (abbreviate-file-name long-dir))))
+            ;; The long name is truncated: its tail is dropped while the short
+            ;; name survives in full.
+            (should (string-match-p "short" short-ann))
+            (should-not (string-match-p "column-width" long-ann))
+            ;; Because the name column has a fixed width, the age and status
+            ;; columns begin at the same offset regardless of name length.
+            (should (= (string-match "2m" short-ann)
+                       (string-match "2m" long-ann)))
+            (should (= (string-match "idle" short-ann)
+                       (string-match "idle" long-ann)))))
+      (clrhash claude-code-ide--sessions))))
 
 (ert-deftest claude-code-ide-test-list-sessions-ordering ()
-  "Session ordering surfaces blocked first, then idle, then working."
-  (clrhash claude-code-ide--run-status-table)
-  (let* ((b "/tmp/ccide-sess-blocked/")
+  "Session ordering surfaces waiting first, then idle, then busy."
+  (clrhash claude-code-ide--sessions)
+  (let* ((wt "/tmp/ccide-sess-waiting/")
          (i "/tmp/ccide-sess-idle/")
-         (w "/tmp/ccide-sess-working/")
-         (sessions (list (cons (abbreviate-file-name w) w)
+         (bs "/tmp/ccide-sess-busy/")
+         (sessions (list (cons (abbreviate-file-name bs) bs)
                          (cons (abbreviate-file-name i) i)
-                         (cons (abbreviate-file-name b) b))))
+                         (cons (abbreviate-file-name wt) wt))))
     (unwind-protect
         (progn
-          (claude-code-ide--set-run-status b "blocked")
-          (claude-code-ide--set-run-status i "idle")
-          (claude-code-ide--set-run-status w "working")
+          (claude-code-ide-tests--seed-status wt "waiting")
+          (claude-code-ide-tests--seed-status i "idle")
+          (claude-code-ide-tests--seed-status bs "busy")
           ;; Mirror the sort `claude-code-ide-list-sessions' applies.
           (let ((sorted (sort (copy-sequence sessions)
                               (lambda (x y)
                                 (< (claude-code-ide--run-status-rank (cdr x))
                                    (claude-code-ide--run-status-rank (cdr y)))))))
-            (should (equal (mapcar #'cdr sorted) (list b i w)))))
-      (dolist (d (list b i w)) (claude-code-ide--clear-run-status d)))))
+            (should (equal (mapcar #'cdr sorted) (list wt i bs)))))
+      (clrhash claude-code-ide--sessions))))
+
+;;; Session Status Watcher Tests
+
+(ert-deftest claude-code-ide-test-sessions-directory ()
+  "The sessions directory lives under the resolved config directory."
+  (claude-code-ide-tests--with-temp-config-dir
+   (should (equal (claude-code-ide--sessions-directory)
+                  (expand-file-name "sessions/" (file-name-as-directory config-dir))))))
+
+(ert-deftest claude-code-ide-test-refresh-session-statuses ()
+  "Refreshing mirrors CLI session files onto matching sessions only."
+  (claude-code-ide-tests--with-temp-config-dir
+   (clrhash claude-code-ide--sessions)
+   (let* ((busy-dir "/tmp/ccide-watch-busy")
+          (wait-dir "/tmp/ccide-watch-wait")
+          (untracked "/tmp/ccide-watch-untracked")
+          (sessions-dir (claude-code-ide--sessions-directory)))
+     ;; Track two sessions; leave `untracked' out of the table.
+     (claude-code-ide--ensure-session busy-dir)
+     (claude-code-ide--ensure-session wait-dir)
+     ;; The CLI writes one file per PID.
+     (claude-code-ide-tests--write-session-file
+      sessions-dir 111 `((cwd . ,busy-dir) (status . "busy") (name . "busy-sess")
+                         (statusUpdatedAt . 1000000) (updatedAt . 1000000)))
+     (claude-code-ide-tests--write-session-file
+      sessions-dir 222 `((cwd . ,wait-dir) (status . "waiting")
+                         (waitingFor . "permission prompt") (name . "wait-sess")
+                         (statusUpdatedAt . 2000000) (updatedAt . 2000000)))
+     (claude-code-ide-tests--write-session-file
+      sessions-dir 333 `((cwd . ,untracked) (status . "busy")
+                         (statusUpdatedAt . 3000000) (updatedAt . 3000000)))
+     (claude-code-ide--refresh-session-statuses)
+     ;; Busy session picks up status and name.
+     (should (equal (claude-code-ide-session-run-status busy-dir) "busy"))
+     (should (equal (claude-code-ide--session-name
+                     (claude-code-ide--get-session busy-dir))
+                    "busy-sess"))
+     ;; Waiting session picks up status, reason and since.
+     (should (equal (claude-code-ide-session-run-status wait-dir) "waiting"))
+     (should (equal (claude-code-ide--session-status-reason
+                     (claude-code-ide--get-session wait-dir))
+                    "permission prompt"))
+     (should (claude-code-ide-session-run-status-since wait-dir))
+     ;; The untracked directory is never added.
+     (should-not (claude-code-ide--get-session untracked)))))
+
+(ert-deftest claude-code-ide-test-refresh-session-statuses-unknown ()
+  "An unrecognised CLI status maps to idle."
+  (claude-code-ide-tests--with-temp-config-dir
+   (clrhash claude-code-ide--sessions)
+   (let ((dir "/tmp/ccide-watch-unknown")
+         (sessions-dir (claude-code-ide--sessions-directory)))
+     (claude-code-ide--ensure-session dir)
+     (claude-code-ide-tests--write-session-file
+      sessions-dir 444 `((cwd . ,dir) (status . "reticulating")
+                         (statusUpdatedAt . 1000000) (updatedAt . 1000000)))
+     (claude-code-ide--refresh-session-statuses)
+     (should (equal (claude-code-ide-session-run-status dir) "idle")))))
+
+(ert-deftest claude-code-ide-test-refresh-session-statuses-newest-wins ()
+  "When two files share a cwd, the most recently updated one wins."
+  (claude-code-ide-tests--with-temp-config-dir
+   (clrhash claude-code-ide--sessions)
+   (let ((dir "/tmp/ccide-watch-dup")
+         (sessions-dir (claude-code-ide--sessions-directory)))
+     (claude-code-ide--ensure-session dir)
+     (claude-code-ide-tests--write-session-file
+      sessions-dir 555 `((cwd . ,dir) (status . "idle")
+                         (statusUpdatedAt . 1000000) (updatedAt . 1000000)))
+     (claude-code-ide-tests--write-session-file
+      sessions-dir 556 `((cwd . ,dir) (status . "busy")
+                         (statusUpdatedAt . 9000000) (updatedAt . 9000000)))
+     (claude-code-ide--refresh-session-statuses)
+     (should (equal (claude-code-ide-session-run-status dir) "busy")))))
 
 (ert-deftest claude-code-ide-test-list-sessions-uses-read-function ()
   "`claude-code-ide-list-sessions' delegates picking to the read function.
 It calls `claude-code-ide-session-read-function' with the sorted sessions and
 displays the chosen session's buffer -- the seam the consult reader hooks into."
   (claude-code-ide-tests--clear-processes)
-  (let* ((dir "/tmp/ccide-read-fn-test/")
+  ;; No trailing slash: the stored key is canonical, so it matches the display
+  ;; and the buffer name `claude-code-ide-list-sessions' derives from it.
+  (let* ((dir "/tmp/ccide-read-fn-test")
          (display (abbreviate-file-name dir))
          (buffer-name (funcall claude-code-ide-buffer-name-function dir))
          (buffer (get-buffer-create buffer-name))
          received-sessions displayed-buffer)
     (unwind-protect
         (progn
-          (puthash dir buffer claude-code-ide--processes)
+          (setf (claude-code-ide--session-process (claude-code-ide--ensure-session dir)) buffer)
           ;; Record the sessions handed to the reader and choose the first.
           (let ((claude-code-ide-session-read-function
                  (lambda (sessions)
@@ -2974,28 +3120,8 @@ displays the chosen session's buffer -- the seam the consult reader hooks into."
       (claude-code-ide-tests--clear-processes)
       (when (buffer-live-p buffer) (kill-buffer buffer)))))
 
-(ert-deftest claude-code-ide-test-consult-annotate-alignment ()
-  "The consult annotator marks its leading space for `marginalia' alignment.
-This lets the status column line up across directories of differing width."
-  (require 'claude-code-ide-consult)
-  (clrhash claude-code-ide--run-status-table)
-  (let ((dir "/tmp/ccide-consult-annot/"))
-    (unwind-protect
-        (progn
-          (claude-code-ide--set-run-status dir "blocked")
-          (let ((ann (claude-code-ide-consult--annotate (abbreviate-file-name dir))))
-            ;; The first character is the alignment marker marginalia looks for.
-            (should (eq (get-text-property 0 'marginalia--align ann) t))
-            (should (string-match-p "blocked" ann))))
-      (claude-code-ide--clear-run-status dir))))
-
-(ert-deftest claude-code-ide-test-consult-integration-defcustom ()
-  "The consult auto-load toggle exists and defaults to enabled."
-  (should (boundp 'claude-code-ide-consult-integration))
-  (should (eq (default-value 'claude-code-ide-consult-integration) t)))
-
-(ert-deftest claude-code-ide-test-consult-integration-toggle ()
-  "The `consult' after-load hook auto-loads the integration per the opt-out toggle.
+(ert-deftest claude-code-ide-test-consult-auto-load ()
+  "The `consult' after-load hook auto-loads the integration unconditionally.
 Runs the actual form `claude-code-ide' registers in `after-load-alist' (not a
 re-implementation), so removing or mis-wiring the auto-load is caught.  `require'
 is stubbed so the hook can run without `consult' installed; `consult-buffer-sources'
@@ -3005,50 +3131,40 @@ co-registered `claude-code-ide-consult' hook has no real `consult' and no lastin
 side effects."
   (let ((hooks (cdr (assq 'consult after-load-alist)))
         (orig-require (symbol-function 'require))
-        (claude-code-ide-session-read-function claude-code-ide-session-read-function))
+        (claude-code-ide-session-read-function claude-code-ide-session-read-function)
+        (loaded nil))
     ;; The auto-load form must be registered, else the integration never loads.
     (should hooks)
-    (dolist (case '((nil . nil) (t . t)))
-      (let ((claude-code-ide-consult-integration (car case))
-            (loaded nil))
-        (cl-letf (((symbol-function 'require)
-                   (lambda (feature &rest args)
-                     (if (eq feature 'claude-code-ide-consult)
-                         (setq loaded t)
-                       (apply orig-require feature args)))))
-          (cl-progv '(consult-buffer-sources) (list nil)
-            (dolist (hook hooks) (funcall hook))))
-        (should (eq loaded (cdr case)))))))
+    (cl-letf (((symbol-function 'require)
+               (lambda (feature &rest args)
+                 (if (eq feature 'claude-code-ide-consult)
+                     (setq loaded t)
+                   (apply orig-require feature args)))))
+      (cl-progv '(consult-buffer-sources) (list nil)
+        (dolist (hook hooks) (funcall hook))))
+    (should loaded)))
 
-(ert-deftest claude-code-ide-test-set-session-status-tool ()
-  "The set-session-status MCP tool records status keyed by the session dir."
-  (require 'claude-code-ide-emacs-tools)
-  (require 'claude-code-ide-mcp-server)
-  ;; Registered eagerly at load; advertised only when reporting is enabled.
-  (let ((claude-code-ide-report-status t))
-    (should (member "set-session-status" (claude-code-ide-mcp-server-get-tool-names))))
-  (let ((session-id "ccide-status-session")
-        (project-dir "/tmp/ccide-tool-status-test/")
-        (buffer (get-buffer-create "*ccide-status-test*")))
-    (unwind-protect
-        (progn
-          (clrhash claude-code-ide--run-status-table)
-          (claude-code-ide-mcp-server-register-session session-id project-dir buffer)
-          (let ((claude-code-ide-mcp-server--current-session-id session-id))
-            (should (equal (claude-code-ide-mcp-set-session-status "working")
-                           "status: working"))
-            (should (equal (claude-code-ide-session-run-status project-dir) "working"))
-            ;; Unknown status falls back to idle.
-            (should (equal (claude-code-ide-mcp-set-session-status "bogus")
-                           "status: idle"))
-            (should (equal (claude-code-ide-session-run-status project-dir) "idle")))
-          ;; Without a session context the tool is a harmless no-op.
-          (let ((claude-code-ide-mcp-server--current-session-id nil))
-            (should (equal (claude-code-ide-mcp-set-session-status "working")
-                           "No session context available"))))
-      (kill-buffer buffer)
-      (clrhash claude-code-ide-mcp-server--sessions)
-      (clrhash claude-code-ide--run-status-table))))
+(ert-deftest claude-code-ide-test-marginalia-auto-load ()
+  "The `marginalia' after-load hook auto-loads the integration unconditionally.
+Runs the actual form `claude-code-ide' registers in `after-load-alist' (not a
+re-implementation), so removing or mis-wiring the auto-load is caught.  `require'
+is stubbed so the hook can run without `marginalia' installed; `marginalia-annotators'
+is bound (via `cl-progv', since the marginalia file only declares it file-locally
+special) so a co-registered `claude-code-ide-marginalia' annotator hook has no
+lasting side effects."
+  (let ((hooks (cdr (assq 'marginalia after-load-alist)))
+        (orig-require (symbol-function 'require))
+        (loaded nil))
+    ;; The auto-load form must be registered, else the integration never loads.
+    (should hooks)
+    (cl-letf (((symbol-function 'require)
+               (lambda (feature &rest args)
+                 (if (eq feature 'claude-code-ide-marginalia)
+                     (setq loaded t)
+                   (apply orig-require feature args)))))
+      (cl-progv '(marginalia-annotators) (list nil)
+        (dolist (hook hooks) (funcall hook))))
+    (should loaded)))
 
 (ert-deftest claude-code-ide-emacs-tools-test-eager-registration ()
   "The built-in tools are registered at load, without any setup call."
@@ -3058,8 +3174,7 @@ side effects."
                 claude-code-ide-mcp-xref-find-apropos
                 claude-code-ide-mcp-project-info
                 claude-code-ide-mcp-imenu-list-symbols
-                claude-code-ide-mcp-treesit-info
-                claude-code-ide-mcp-set-session-status))
+                claude-code-ide-mcp-treesit-info))
     (should (cl-find-if (lambda (spec) (eq (plist-get spec :function) fn))
                         claude-code-ide-mcp-server-tools))))
 
@@ -3074,94 +3189,6 @@ side effects."
     (should-not (member "claude-code-ide-mcp-xref-find-references"
                         (claude-code-ide-mcp-server-get-tool-names)))))
 
-(ert-deftest claude-code-ide-emacs-tools-test-status-advertisement-gating ()
-  "The status tool is advertised only when report-status is non-nil."
-  (require 'claude-code-ide-emacs-tools)
-  (require 'claude-code-ide-mcp-server)
-  (let ((claude-code-ide-report-status t))
-    (should (member "set-session-status"
-                    (claude-code-ide-mcp-server-get-tool-names))))
-  (let ((claude-code-ide-report-status nil))
-    (should-not (member "set-session-status"
-                        (claude-code-ide-mcp-server-get-tool-names)))))
-
-(ert-deftest claude-code-ide-emacs-tools-test-dispatch-gating ()
-  "A gated-off tool is not callable via tools/call (strict gating)."
-  (require 'claude-code-ide-emacs-tools)
-  (require 'claude-code-ide-mcp-server)
-  (require 'claude-code-ide-mcp-http-server)
-  ;; Disabled -> the tool is rejected as unknown.
-  (let ((claude-code-ide-report-status nil))
-    (should-error (claude-code-ide-mcp-http-server--handle-tools-call
-                   '((name . "set-session-status")))
-                  :type 'claude-code-ide-mcp-json-rpc-error))
-  ;; Enabled -> the call is dispatched (no Unknown tool error).
-  (let ((claude-code-ide-report-status t)
-        (claude-code-ide-mcp-server--current-session-id nil))
-    (should (claude-code-ide-mcp-http-server--handle-tools-call
-             '((name . "set-session-status")
-               (arguments . ((status . "idle"))))))))
-
-(ert-deftest claude-code-ide-test-status-hooks-tool-matches-registration ()
-  "Every mcp_tool hook in the shipped file names the registered status tool."
-  (require 'json)
-  (require 'claude-code-ide-emacs-tools)
-  (require 'claude-code-ide-mcp-server)
-  (let* ((registered (cl-find-if
-                      (lambda (spec)
-                        (eq (plist-get spec :function)
-                            'claude-code-ide-mcp-set-session-status))
-                      claude-code-ide-mcp-server-tools))
-         (tool-name (plist-get registered :name))
-         (data (json-read-file claude-code-ide--status-hooks-file))
-         (hooks (cdr (assq 'hooks data)))
-         (seen 0))
-    (should (equal tool-name "set-session-status"))
-    (dolist (event hooks)
-      (dolist (group (append (cdr event) nil))
-        (dolist (h (append (cdr (assq 'hooks group)) nil))
-          (when (equal (cdr (assq 'type h)) "mcp_tool")
-            (setq seen (1+ seen))
-            (should (equal (cdr (assq 'tool h)) tool-name))))))
-    ;; All four lifecycle events are wired.
-    (should (= seen 4))))
-
-(ert-deftest claude-code-ide-test-status-hooks-file ()
-  "The shipped hooks file exists and is valid JSON wiring the status tool."
-  (require 'json)
-  (should (file-exists-p claude-code-ide--status-hooks-file))
-  (let* ((data (json-read-file claude-code-ide--status-hooks-file))
-         (hooks (cdr (assq 'hooks data))))
-    (should hooks)
-    ;; All four lifecycle events are wired.
-    (dolist (event '(Notification PostToolUse Stop UserPromptSubmit))
-      (should (assq event hooks)))))
-
-(ert-deftest claude-code-ide-test-build-command-status-settings ()
-  "--settings <hooks> is added only when reporting is on and the server is up."
-  (cl-letf (((symbol-function 'claude-code-ide-mcp-server-ensure-server)
-             (lambda () t))
-            ((symbol-function 'claude-code-ide-mcp-server-get-config)
-             (lambda (&optional _id)
-               '((mcpServers . ((emacs-tools . ((type . "http")
-                                                (url . "http://localhost:1/mcp"))))))))
-            ((symbol-function 'claude-code-ide-mcp-server-get-tool-names)
-             (lambda (&optional _prefix) nil)))
-    (claude-code-ide-tests--with-mocked-cli "claude"
-                                            (let ((claude-code-ide-mcp-allowed-tools nil))
-                                              ;; Enabled: the shipped hooks file is handed to the CLI.
-                                              (let ((claude-code-ide-report-status t))
-                                                (let ((cmd (claude-code-ide--build-claude-command)))
-                                                  (should (string-match-p "--settings " cmd))
-                                                  (should (string-match-p
-                                                           (regexp-quote (file-name-nondirectory
-                                                                          claude-code-ide--status-hooks-file))
-                                                           cmd))))
-                                              ;; Disabled: no --settings flag.
-                                              (let ((claude-code-ide-report-status nil))
-                                                (should-not (string-match-p "--settings "
-                                                                            (claude-code-ide--build-claude-command))))))))
-
 (ert-deftest claude-code-ide-test-build-command-empty-allowed-tools ()
   "--allowedTools is omitted when \\='auto resolves to no enabled tools."
   (cl-letf (((symbol-function 'claude-code-ide-mcp-server-ensure-server)
@@ -3174,8 +3201,7 @@ side effects."
             ((symbol-function 'claude-code-ide-mcp-server-get-tool-names)
              (lambda (&optional _prefix) nil)))
     (claude-code-ide-tests--with-mocked-cli "claude"
-                                            (let ((claude-code-ide-mcp-allowed-tools 'auto)
-                                                  (claude-code-ide-report-status nil))
+                                            (let ((claude-code-ide-mcp-allowed-tools 'auto))
                                               (should-not (string-match-p
                                                            "--allowedTools"
                                                            (claude-code-ide--build-claude-command)))))))

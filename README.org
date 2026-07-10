@@ -213,7 +213,6 @@ This allows you to refine Claude's suggestions before they're applied, ensuring 
 | ~claude-code-ide-system-prompt~                 | Custom system prompt to append               | ~nil~                                  |
 | ~claude-code-ide-enable-mcp-server~             | Enable MCP tools server                      | ~nil~                                  |
 | ~claude-code-ide-enable-emacs-tools~            | Advertise built-in Emacs nav tools (xref…)   | ~nil~                                  |
-| ~claude-code-ide-report-status~                 | Report session run status through Claude hooks | ~nil~                                |
 | ~claude-code-ide-mcp-server-port~               | Port for MCP tools server                    | ~nil~ (auto-select)                    |
 | ~claude-code-ide-mcp-server-tools~              | List of advertised Emacs functions           | ~nil~                                  |
 | ~claude-code-ide-diagnostics-backend~           | Diagnostics backend (auto/flycheck/flymake)  | ~'auto~                                |
@@ -468,7 +467,6 @@ Claude Code IDE includes built-in MCP tools that advertise Emacs functionality t
 - =treesit-info= - Get tree-sitter syntax tree information for deep code structure analysis
 - =imenu-list-symbols= - List all symbols (functions, classes, variables) in a file using imenu
 - =project-info= - Get information about the current project (directory, files, etc.)
-- =set-session-status= - Report a session's run status (idle/working/blocked) to Emacs (driven by Claude Code hooks; see [[#session-status][Session Status]])
 
 *** Enabling MCP Tools
 
@@ -492,52 +490,39 @@ Once enabled, Claude can use these tools to navigate your codebase. For example:
 :CUSTOM_ID: session-status
 :END:
 
-Each session reports its current *run status* to Emacs, so you can tell at a
-glance which sessions need you and which are busy. There are three statuses:
+Each session's current *run status* is shown in Emacs, so you can tell at a
+glance which sessions need you and which are busy. There are three statuses,
+mirroring those the Claude Code CLI reports:
 
-- =blocked= - waiting on you (a permission prompt or elicitation dialog)
-- =working= - actively processing a prompt or running tools
+- =waiting= - waiting on you (e.g. a permission prompt; the reason is shown)
+- =busy= - actively processing a prompt or running tools
 - =idle= - finished and waiting for input
 
-This works once the MCP tools server is enabled (=claude-code-ide-enable-mcp-server=)
-and status reporting is turned on (=claude-code-ide-report-status=): the package
-registers a =set-session-status= MCP tool and hands the CLI a small hooks file
-(shipped with the package) via =--settings=, which calls that tool on the
-relevant lifecycle events. No manual hook configuration is required. Status is
+The status is read directly from the per-session files the CLI maintains under
+=~/.claude/sessions/= (or =$CLAUDE_CONFIG_DIR/sessions/=): the package watches
+that directory and mirrors each running session's status onto its project. No
+configuration, hooks, or MCP tools server is required, and the status is
 cleared automatically when a session exits, even on a crash.
 
-=M-x claude-code-ide-list-sessions= orders sessions by status (blocked first,
-then idle, then working) and annotates each with its status and how long it has
-held it. The status accessors =claude-code-ide-session-run-status= and
+=M-x claude-code-ide-list-sessions= lists sessions ordered by status (waiting
+first, then idle, then busy); each candidate is the project directory. When
+[[https://github.com/minad/marginalia][=marginalia=]] is loaded, every row is
+annotated -- in aligned columns -- with the session's name, how long it has held
+its status, its run status and, when waiting, the reason (e.g. =permission
+prompt=).  =marginalia= is the only source of these annotations, so without it
+the picker shows just the directory. The status accessors =claude-code-ide-session-run-status= and
 =claude-code-ide-session-run-status-since= are public, so you can surface the
 information elsewhere (mode line, tab bar, etc.).
 
-Status reporting is off by default. To enable it, set
-=claude-code-ide-report-status= to =t= (the MCP server must also be enabled):
-
-#+begin_src emacs-lisp
-(setq claude-code-ide-enable-mcp-server t) ; Enable the MCP server
-(setq claude-code-ide-report-status t)     ; Report status through Claude hooks
-#+end_src
-
 **** Consult integration (optional)
 
-If you use [[https://github.com/minad/consult][=consult=]] (and optionally
-[[https://github.com/minad/marginalia][=marginalia=]]), the integration activates
-automatically -- no extra setup required. When =consult= is loaded, a session
-source is added to =consult-buffer= (narrow with =c=) that previews sessions in
-the side window and shows status/elapsed-time annotations, and
-=claude-code-ide-list-sessions= is upgraded to a =consult=-based picker with that
-same live preview. It adds no hard dependency and falls back to plain
-=completing-read= when =consult= is not installed.
-
-To opt out and keep the plain =completing-read= picker, set
-=claude-code-ide-consult-integration= to =nil= before =consult= is loaded (for
-example via =use-package='s =:custom=):
-
-#+begin_src emacs-lisp
-(setq claude-code-ide-consult-integration nil)
-#+end_src
+If you use [[https://github.com/minad/consult][=consult=]], the integration
+activates automatically whenever =consult= is loaded -- no extra setup required.
+A session source is added to =consult-buffer= (narrow with =c=) that previews
+sessions in the side window, and =claude-code-ide-list-sessions= is upgraded to a
+=consult=-based picker with that same live preview. It adds no hard dependency
+and falls back to plain =completing-read= when =consult= is not installed. (Row
+annotations come from =marginalia=, independently of =consult= -- see above.)
 
 ** Creating Custom MCP Tools
 
